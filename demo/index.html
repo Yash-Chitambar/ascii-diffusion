@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ASCII Diffusion — Image Demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0a0a0a;
+    color: #e0e0e0;
+    font-family: system-ui, -apple-system, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 20px;
+  }
+
+  h1 {
+    font-size: 1.4rem;
+    margin-bottom: 12px;
+    color: #00d4ff;
+  }
+
+  #upload-area {
+    border: 2px dashed #333;
+    border-radius: 12px;
+    padding: 40px 60px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s;
+    margin-bottom: 16px;
+  }
+  #upload-area:hover, #upload-area.dragover {
+    border-color: #00d4ff;
+  }
+  #upload-area p { color: #888; font-size: 0.95rem; }
+  #upload-area input { display: none; }
+
+  #controls {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  #controls label { font-size: 0.85rem; color: #aaa; }
+  #controls input[type=range] { width: 100px; }
+  #controls button {
+    background: #00d4ff;
+    color: #000;
+    border: none;
+    padding: 6px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  #controls button:hover { background: #33dfff; }
+
+  #output {
+    font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "Courier New", monospace;
+    font-feature-settings: "liga" 0, "calt" 0;
+    font-size: clamp(4px, 1vw, 12px);
+    line-height: 1.0;
+    letter-spacing: 0em;
+    color: #00d4ff;
+    white-space: pre;
+    background: #0a0a0a;
+    overflow: hidden;
+    cursor: crosshair;
+    user-select: none;
+  }
+</style>
+</head>
+<body>
+
+<h1>ASCII Diffusion — Flow Matching Demo</h1>
+
+<div id="upload-area">
+  <p>Drop an image here or click to upload</p>
+  <input type="file" id="file-input" accept="image/*">
+</div>
+
+<div id="controls" style="display:none">
+  <label>Grid width: <input type="range" id="grid-w" min="40" max="200" value="120"> <span id="grid-w-val">120</span></label>
+  <label>Flow speed: <input type="range" id="flow-speed" min="1" max="20" value="4" step="1"> <span id="flow-speed-val">0.04</span></label>
+  <label>Scatter: <input type="range" id="scatter-r" min="10" max="100" value="40"> <span id="scatter-r-val">40</span></label>
+  <button id="re-scatter">Re-scatter</button>
+</div>
+
+<pre id="output"></pre>
+
+<script>
+// ── Brightness ramp (dark → bright) ──
+const BRIGHTNESS_RAMP = ' .:-=+*#%@';
+
+function brightnessToCh(b) {
+  const idx = Math.round(b * (BRIGHTNESS_RAMP.length - 1));
+  return BRIGHTNESS_RAMP[Math.max(0, Math.min(idx, BRIGHTNESS_RAMP.length - 1))];
+}
+
+// ── State ──
+let particles = [];
+let gridW = 120;
+let gridH = 60;
+let rafId = null;
+let lastTime = 0;
+let mousePos = null;
+let mouseVel = { x: 0, y: 0 };
+let mouseSpeed = 0;
+let mouseDown = false;
+let loadedImg = null;
+
+// Config
+const config = {
+  flowSpeed: 0.06,
+  clickScatterRadius: 14,
+  clickScatterForce: 15,
+  damping: 0.92,
+  scatterAmount: 40,
+  brightnessThreshold: 0.05,
+  velocityMultiplier: 1.5,
+};
+
+// ── Image → Particles ──
+function imageToParticles(img, w, h) {
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0, w, h);
+  const data = ctx.getImageData(0, 0, w, h).data;
+
+  const result = [];
+  let id = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3] / 255;
+      const brightness = ((0.299 * r + 0.587 * g + 0.114 * b) / 255) * a;
+      if (brightness < config.brightnessThreshold) continue;
+      const ch = brightnessToCh(brightness);
+      if (ch === ' ') continue;
+      result.push({
+        id: id++,
+        homeX: x, homeY: y,
+        currentX: x + (Math.random() - 0.5) * config.scatterAmount,
+        currentY: y + (Math.random() - 0.5) * config.scatterAmount,
+        vx: 0, vy: 0,
+        t: 0,
+        char: ch,
+        brightness,
+      });
+    }
+  }
+  return result;
+}
+
+// ── Physics: flow matching with click-to-scatter ──
+function applyPhysics(dt) {
+  const dtScale = dt / 16.67;
+
+  const radiusSq = config.clickScatterRadius * config.clickScatterRadius;
+  const speedBoost = mouseDown ? 1 + mouseSpeed * config.velocityMultiplier : 1;
+  const dampingFactor = Math.pow(config.damping, dtScale);
+
+  for (const p of particles) {
+    // 1. Mouse repulsion — only on click
+    if (mousePos && mouseDown) {
+      const dx = p.currentX - mousePos.x;
+      const dy = p.currentY - mousePos.y;
+      const distSq = dx * dx + dy * dy;
+
+      if (distSq < radiusSq && distSq > 0.01) {
+        const dist = Math.sqrt(distSq);
+        const force = (config.clickScatterForce * speedBoost) / distSq;
+
+        p.vx += ((dx / dist) * force + mouseVel.x * 0.2) * dtScale;
+        p.vy += ((dy / dist) * force + mouseVel.y * 0.2) * dtScale;
+        p.t = 0;
+      }
+    }
+
+    // 2. Damping
+    p.vx *= dampingFactor;
+    p.vy *= dampingFactor;
+
+    // 3. Integrate scatter momentum
+    p.currentX += p.vx * dtScale;
+    p.currentY += p.vy * dtScale;
+
+    // 4. Flow matching: smooth lerp toward home
+    if (p.t < 1) {
+      const prevT = p.t;
+      p.t = Math.min(p.t + config.flowSpeed * dtScale, 1);
+      const remaining = 1 - prevT;
+      const alpha = remaining > 0.001 ? 1 - (1 - p.t) / remaining : 1;
+
+      const homeDx = p.homeX - p.currentX;
+      const homeDy = p.homeY - p.currentY;
+      p.currentX += homeDx * alpha;
+      p.currentY += homeDy * alpha;
+
+      // Snap when close
+      const newDx = p.homeX - p.currentX;
+      const newDy = p.homeY - p.currentY;
+      if (newDx * newDx + newDy * newDy < 0.01) {
+        p.currentX = p.homeX;
+        p.currentY = p.homeY;
+        p.vx = 0; p.vy = 0;
+        p.t = 1;
+      }
+    }
+  }
+}
+
+// ── Renderer: brightest-wins grid → string ──
+// Pre-allocated grids (rebuilt when scene changes)
+let renderGrid = [];
+let renderBGrid = [];
+
+function allocateGrids() {
+  renderGrid = Array.from({ length: gridH }, () => new Array(gridW).fill(' '));
+  renderBGrid = Array.from({ length: gridH }, () => new Array(gridW).fill(-1));
+}
+
+function render() {
+  // Clear grids in-place
+  for (let y = 0; y < gridH; y++) {
+    for (let x = 0; x < gridW; x++) {
+      renderGrid[y][x] = ' ';
+      renderBGrid[y][x] = -1;
+    }
+  }
+
+  for (const p of particles) {
+    const x = Math.round(p.currentX);
+    const y = Math.round(p.currentY);
+    if (x >= 0 && x < gridW && y >= 0 && y < gridH) {
+      if (p.brightness > renderBGrid[y][x]) {
+        renderGrid[y][x] = p.char;
+        renderBGrid[y][x] = p.brightness;
+      }
+    }
+  }
+
+  const lines = [];
+  for (let y = 0; y < gridH; y++) {
+    lines.push(renderGrid[y].join(''));
+  }
+  return lines.join('\n');
+}
+
+// ── Animation loop (uncapped — runs at display refresh rate) ──
+function loop(time) {
+  const dt = Math.min(time - lastTime, 33); // tighter clamp for smoother recovery
+  lastTime = time;
+  applyPhysics(dt);
+  outputEl.textContent = render();
+  rafId = requestAnimationFrame(loop);
+}
+
+function start() {
+  if (rafId) cancelAnimationFrame(rafId);
+  lastTime = performance.now();
+  rafId = requestAnimationFrame(loop);
+}
+
+function buildScene(img) {
+  // Compute grid height to preserve aspect ratio
+  // Characters are ~2x taller than wide, so halve the vertical resolution
+  const aspect = img.naturalHeight / img.naturalWidth;
+  gridH = Math.round(gridW * aspect * 0.5);
+  particles = imageToParticles(img, gridW, gridH);
+  allocateGrids();
+  start();
+}
+
+// ── DOM wiring ──
+const outputEl = document.getElementById('output');
+const uploadArea = document.getElementById('upload-area');
+const fileInput = document.getElementById('file-input');
+const controlsEl = document.getElementById('controls');
+
+// Measure actual character size using a hidden span
+const measureSpan = document.createElement('span');
+measureSpan.textContent = 'M';
+measureSpan.style.position = 'absolute';
+measureSpan.style.visibility = 'hidden';
+measureSpan.style.fontFamily = getComputedStyle(outputEl).fontFamily;
+measureSpan.style.fontSize = getComputedStyle(outputEl).fontSize;
+measureSpan.style.lineHeight = getComputedStyle(outputEl).lineHeight;
+measureSpan.style.letterSpacing = getComputedStyle(outputEl).letterSpacing;
+measureSpan.style.fontFeatureSettings = '"liga" 0, "calt" 0';
+document.body.appendChild(measureSpan);
+
+let charW = measureSpan.getBoundingClientRect().width;
+let charH = measureSpan.getBoundingClientRect().height;
+
+// Re-measure on resize (font size uses clamp)
+window.addEventListener('resize', () => {
+  measureSpan.style.fontSize = getComputedStyle(outputEl).fontSize;
+  charW = measureSpan.getBoundingClientRect().width;
+  charH = measureSpan.getBoundingClientRect().height;
+});
+
+// Mouse tracking — position, velocity, and click state
+outputEl.addEventListener('mousemove', (e) => {
+  const rect = outputEl.getBoundingClientRect();
+  const newPos = {
+    x: (e.clientX - rect.left) / charW,
+    y: (e.clientY - rect.top) / charH,
+  };
+  if (mousePos) {
+    mouseVel.x = newPos.x - mousePos.x;
+    mouseVel.y = newPos.y - mousePos.y;
+    mouseSpeed = Math.sqrt(mouseVel.x * mouseVel.x + mouseVel.y * mouseVel.y);
+  }
+  mousePos = newPos;
+});
+outputEl.addEventListener('mouseleave', () => {
+  mousePos = null;
+  mouseSpeed = 0;
+  mouseVel.x = 0; mouseVel.y = 0;
+});
+outputEl.addEventListener('mousedown', (e) => { e.preventDefault(); mouseDown = true; });
+window.addEventListener('mouseup', () => { mouseDown = false; });
+
+// Upload handling
+uploadArea.addEventListener('click', () => fileInput.click());
+uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('dragover'); });
+uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+uploadArea.addEventListener('drop', (e) => {
+  e.preventDefault();
+  uploadArea.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file) loadFile(file);
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) loadFile(fileInput.files[0]);
+});
+
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      loadedImg = img;
+      controlsEl.style.display = 'flex';
+      buildScene(img);
+    };
+    img.src = reader.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+// Controls
+const gridWSlider = document.getElementById('grid-w');
+const gridWVal = document.getElementById('grid-w-val');
+gridWSlider.addEventListener('input', () => {
+  gridW = parseInt(gridWSlider.value);
+  gridWVal.textContent = gridW;
+  if (loadedImg) buildScene(loadedImg);
+});
+
+const flowSpeedSlider = document.getElementById('flow-speed');
+const flowSpeedVal = document.getElementById('flow-speed-val');
+flowSpeedSlider.addEventListener('input', () => {
+  config.flowSpeed = parseInt(flowSpeedSlider.value) / 100;
+  flowSpeedVal.textContent = config.flowSpeed.toFixed(2);
+});
+
+const scatterSlider = document.getElementById('scatter-r');
+const scatterVal = document.getElementById('scatter-r-val');
+scatterSlider.addEventListener('input', () => {
+  config.scatterAmount = parseInt(scatterSlider.value);
+  scatterVal.textContent = config.scatterAmount;
+});
+
+document.getElementById('re-scatter').addEventListener('click', () => {
+  for (const p of particles) {
+    p.currentX = p.homeX + (Math.random() - 0.5) * config.scatterAmount;
+    p.currentY = p.homeY + (Math.random() - 0.5) * config.scatterAmount;
+    p.vx = 0; p.vy = 0;
+    p.t = 0;
+  }
+});
+</script>
+</body>
+</html>
