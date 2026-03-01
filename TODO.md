@@ -90,10 +90,10 @@ This is the core contribution. Implement carefully.
   - `gridToParticles(grid, options)` — 2D string array → particles
   - `charToBrightness(char)` — map ASCII char to 0.0–1.0 brightness
 
-- [ ] **`src/scene/image-to-particles.ts`**
-  - `imageToAsciiScene(src, gridWidth, gridHeight, options): Promise<AsciiScene>`
-  - `imageDataToParticles(imageData, w, h, scattered)` — canvas pixel → particle
-  - `rgbToBrightness(r, g, b)` — luminosity formula
+- [x] **`src/scene/image-to-particles.ts`**
+  - `imageToAsciiScene(img, gridWidth, gridHeight, options): AsciiScene`
+  - Canvas-based pixel sampling with BT.601 perceived brightness
+  - `brightnessToCh` imported from grid-to-particles (shared brightness ramp)
 
 - [ ] **`src/scene/scene-builder.ts`**
   - `SceneBuilder` class with fluent API: `.addText()`, `.addImage()`, `.addGrid()`, `.build()`, `.buildAsync()`
@@ -140,7 +140,7 @@ This is the core contribution. Implement carefully.
 
 ## Phase 10: Demo & Docs
 
-- [ ] Add `demo/` directory with a minimal HTML/React demo showing flow matching in action
+- [x] Add `demo/` directory with a self-contained HTML demo (image upload → scatter → flow matching)
 - [ ] Update `PLAN.md` → `README.md` (trim to user-facing docs)
 
 ---

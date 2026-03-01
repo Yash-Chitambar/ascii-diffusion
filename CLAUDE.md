@@ -53,9 +53,12 @@ The differentiating feature of this package is how particles return to their hom
 
 ---
 
-## Codebase Layout (target)
+## Codebase Layout
 
 ```
+demo/
+└── index.html                  # Self-contained browser demo (image upload → ASCII)
+
 src/
 ├── core/
 │   ├── types.ts                # Interfaces: AsciiParticle, AsciiScene, configs
@@ -148,8 +151,6 @@ The `t` field is new vs. plain spring physics. It tracks each particle's progres
 
 ## Development Setup
 
-No code exists yet — this is a greenfield TypeScript package. When scaffolded:
-
 ```bash
 npm install          # Install deps
 npm run build        # tsc compile
@@ -157,6 +158,10 @@ npm run dev          # Watch mode
 ```
 
 Stack: TypeScript, React 18/19 peer dep, zero runtime dependencies.
+
+### Demo
+
+Open `demo/index.html` directly in a browser (no build step required). Upload an image to see flow matching in action. Click and drag to scatter particles.
 
 ---
 

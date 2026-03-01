@@ -30,7 +30,9 @@ export { wavePhysics } from './physics-modes/wave.js';
 
 // ── Scene ──
 export { textToParticles, textToBlockParticles } from './scene/text-to-particles.js';
-export { gridToParticles, charToBrightness } from './scene/grid-to-particles.js';
+export { gridToParticles, charToBrightness, brightnessToCh } from './scene/grid-to-particles.js';
+export { imageToAsciiScene } from './scene/image-to-particles.js';
+export type { ImageToParticlesOptions } from './scene/image-to-particles.js';
 export { SceneBuilder } from './scene/scene-builder.js';
 export { transitionScenes, dissolveTransition } from './scene/transitions.js';
 

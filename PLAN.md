@@ -357,18 +357,14 @@ Carry over exactly:
 - Optional scattered start positions
 - Skip spaces
 
-#### 3.3 — Image-to-Particles (`scene/image-to-particles.ts`)
+#### 3.3 — Image-to-Particles (`scene/image-to-particles.ts`) ✅
 
-**Port from:** `personal_website/packages/ascii-converter/src/image-to-ascii.ts`
-
-Carry over:
-- `imageToAsciiScene(src, gridWidth, gridHeight, options)` — Promise-based image loading
-- `imageDataToParticles(imageData, w, h, scattered)` — core pixel-to-particle conversion
-- Canvas-based image sampling
-- `rgbToBrightness` luminosity formula
-- Alpha threshold (< 128) and dark threshold (< 0.05)
-
-**Simplification:** Self-contained — include a minimal char ramp locally rather than importing from a separate ascii-converter package.
+**Implemented.** Synchronous API taking an already-loaded `HTMLImageElement`:
+- `imageToAsciiScene(img, gridWidth, gridHeight, options): AsciiScene`
+- Canvas-based pixel sampling at grid resolution
+- BT.601 perceived brightness: `(0.299*R + 0.587*G + 0.114*B) / 255 * alpha`
+- Imports `brightnessToCh` from `grid-to-particles.ts` (shared brightness ramp)
+- Options: `scattered`, `scatterRadius`, `brightnessThreshold`, `config` override
 
 #### 3.4 — Scene Builder (`scene/scene-builder.ts`)
 

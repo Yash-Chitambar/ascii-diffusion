@@ -15,6 +15,14 @@ export function charToBrightness(char: string): number {
   return 0.7;
 }
 
+/**
+ * Map a brightness value (0.0–1.0) to an ASCII character.
+ */
+export function brightnessToCh(brightness: number): string {
+  const idx = Math.round(brightness * (BRIGHTNESS_RAMP.length - 1));
+  return BRIGHTNESS_RAMP[Math.max(0, Math.min(idx, BRIGHTNESS_RAMP.length - 1))];
+}
+
 export interface GridToParticlesOptions {
   offsetX?: number;
   offsetY?: number;
