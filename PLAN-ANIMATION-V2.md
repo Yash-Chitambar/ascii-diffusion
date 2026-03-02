@@ -35,16 +35,43 @@ float psize = (snoise2(...) + 2.0) * max(grey, 0.2) * uSize;
 - **Z-depth per particle** — a virtual Z axis gives simulated depth; in ASCII,
   Z maps to character density/brightness rather than 3D projection.
 - **Off-screen influence map (touch texture)** — instead of O(n) distance checks
-  per frame, maintain a 2D decay map; mouse "paints" force into it. Map decays
-  naturally each frame, creating trailing ripple effects.
-- **Per-particle angle** — each particle has an intrinsic angle (from home
-  position or random). Scatter force applied as `cos(angle)` / `sin(angle)`
-  rather than purely radially, producing non-symmetric, organic trajectories.
+  per frame, maintain a trail-based map; mouse "paints" force into it, creating
+  trailing ripple effects that outlast the cursor.
+- **Per-particle angle** — each particle has an intrinsic angle. Scatter force
+  applied as `cos(angle)` / `sin(angle)` rather than purely radially.
 - **Brightness ↔ character density** — source pixel luminance drives which
-  character a particle uses. Lower brightness = lighter/sparser char. This
-  gives naturally varying particle "weight."
+  character a particle uses. Lower brightness = lighter/sparser char.
 - **Simplex noise for organic drift** — idle particles use noise sampled from
   `(particleIndex * 0.1, time * 0.1)` for gentle aperiodic drift.
+
+**What the actual JavaScript source adds (TouchTexture.js + Particles.js):**
+
+TouchTexture.js does NOT use simple `map *= decay`. It keeps a **trail array**
+of past mouse positions, each with an individually-baked force and age lifecycle:
+
+```javascript
+addTouch(point) {
+  const last = this.trail[this.trail.length - 1];
+  const dd = (last.x - point.x)**2 + (last.y - point.y)**2;
+  // Force baked at add-time: fast swipe → force≈1, slow hover → ≈0
+  const force = Math.min(dd * 10000, 1);
+  this.trail.push({ x: point.x, y: point.y, age: 0, force });
+}
+// Per frame: bloom in over first 30% of maxAge (120 frames), fade over last 70%
+// Points removed when age > maxAge — trail persists ~4 seconds naturally
+```
+
+Particles.js — per-particle angle is explicitly half-circle:
+```javascript
+angles[j] = Math.random() * Math.PI;  // [0, π], NOT [0, 2π]
+```
+Half-circle (not full 2π) means particles scatter into one "hemisphere," giving
+the organic asymmetric sweep rather than a uniform radial burst.
+
+The `show()` / `hide()` lifecycle (missing from the previous plan version):
+- `show()`: `uDepth` 40→4 over 1.5s — particles start deeply scattered in Z-space
+  and converge to the image plane. `uSize` 0.5→1.5 over 1s.
+- `hide()`: `uDepth`→−20 over 0.8s, `uSize`→0 over 0.64s — scatter outward.
 
 ---
 
@@ -63,38 +90,56 @@ Reinforces two ideas worth extracting:
 
 ---
 
-### 3. Spu7Nix/obamify (Jump Flood Algorithm + WGSL)
+### 3. Yash-Chitambar/obamify (Jump Flood Algorithm + Rust/WASM)
 
-obamify renders one face morphed onto another by reassigning source pixels to
-target pixels optimally. The core problem is **particle-to-home assignment**:
-which particle gets which home slot?
+*Verified by reading morph_sim.rs, calculate/mod.rs, and the WGSL shaders.*
 
-The JFA (Jump Flood Algorithm) is a GPU-parallel Voronoi computation used to
-find the nearest unclaimed home for each particle. The key insight:
+obamify morphs one image into another by reassigning source pixels to target
+positions. The core problem is **particle-to-home assignment**: which particle
+gets which home slot?
 
 > **If particles always return to their birth home, paths cross and the motion
 > looks mechanical. If particles dynamically claim the nearest available home,
 > paths do not cross and the collective motion looks organic.**
 
-For our CPU context we implement a greedy nearest-neighbor approximation:
-on scatter, sort displaced particles by distance to their home cluster, assign
-closest first. This is O(n log n) and already produces most of the visual
-benefit of full JFA.
+**CellBody** — what a particle actually contains in obamify:
+```rust
+pub struct CellBody {
+  srcx, srcy: f32,  // current position
+  dstx, dsty: f32,  // destination / home
+  velx, vely: f32,
+  dst_force:  f32,  // per-particle homing strength (default 0.13)
+  age:        u32,  // frames since last reset
+}
+```
 
-obamify also offers an **"Optimal"** mode (true optimal transport / Hungarian
-algorithm) but notes it is "extremely slow for high resolutions." We skip this
-and use greedy NN.
+**Per-frame physics** (morph_sim.rs) — three mechanics beyond basic attraction:
+- **Cubic factor curve**: `factor = min((age_frames/60 * dst_force)³, 1000)`.
+  Particles drift slowly at first, then rush home. No oscillation, dramatic
+  late acceleration — completely different from spring physics.
+- **Boid velocity alignment**: `ALIGNMENT_FACTOR = 0.8`. Each particle blends
+  80% of its velocity toward the local neighbor average. Nearby particles form
+  visible streaming groups during return.
+- **Personal space**: `PERSONAL_SPACE = 0.95` cells. Light P2P repulsion
+  prevents particles stacking on the same cell during transit.
+- Damping: `vel *= 0.97`. Max velocity: 6.0 cells/frame.
+
+**Assignment modes** (verified, not inferred):
+- **"Optimal" (Kuhn-Munkres / Hungarian)**: runs **offline**, O(n³), minimizes
+  `colorWeight × colorDiff² + spatialWeight × spatialDist²`. Result saved as
+  `assignments.json` — loaded at runtime, not computed live.
+- **Genetic algorithm** (practical runtime alternative): iterative hill-climbing.
+  Pick random particle pairs within a shrinking search radius; swap if total
+  cost decreases. Radius decays ×0.8 each generation. Near-optimal, ~O(n log n).
+- **JFA** (runtime GPU): log₂(maxDim) passes, 8-direction sampling at each step.
 
 **Key techniques to adopt:**
-- **On-scatter dynamic reassignment** — when `t` resets to 0, run a greedy
-  nearest-home reassignment pass. Prevents particle paths from crossing during
-  the return journey.
-- **Scene-transition optimal matching** — on scene change, match old particle
-  positions to new home positions using greedy nearest-neighbor. Minimizes
-  total travel distance, producing smoother morphing.
-- **Resolution-adaptive sampling** — for image sources, oversample bright
-  regions and undersample dark regions so particles concentrate where the image
-  has detail.
+- **On-scatter dynamic reassignment** — greedy or genetic pass on scatter event
+  prevents crossing paths during return.
+- **Scene-transition matching** — match old positions to new homes to minimize
+  total travel distance.
+- **Cubic homing + boid flocking + personal space** — three new opt-in physics
+  modes derived directly from morph_sim.rs (see Phase I).
 
 ---
 
@@ -106,97 +151,86 @@ Organized into phases by impact and implementation complexity.
 
 ### Phase A — Mouse Interaction Quality
 
-**A1. Mouse velocity tracking**
+**A1. TrailMap — unified trail array with age-based bloom/fade decay**
 
-Track `dx`, `dy` between frames. Scatter force scales with mouse speed:
+*(Replaces and merges old A1 "Mouse velocity tracking" and A2 "Spatial influence
+map". The actual TouchTexture.js collapses both into a single trail array.)*
 
-```typescript
-// In useMouseTracking or the physics applicator
-const mouseSpeed = Math.sqrt(mouseVx * mouseVx + mouseVy * mouseVy);
-const speedMultiplier = Math.min(1 + mouseSpeed / 8, 4.0);
-effectiveScatterForce = config.scatterForce * speedMultiplier;
-```
-
-Fast swipe → dramatic wide scatter. Slow hover → subtle gentle push.
-Particles feel proportionally responsive rather than uniformly reactive.
-
-**Files:** `core/types.ts` (add `mouseVelocity` to context), physics modes.
-
----
-
-**A2. Spatial influence map (touch texture, CPU version)**
-
-Replace per-frame O(n·m) distance checks with an O(w·h + n) influence map:
+Mouse velocity is NOT tracked separately — it's baked into each trail point at
+add-time. The trail array manages its own lifecycle:
 
 ```typescript
-// influence-map.ts — new file
-export class InfluenceMap {
-  private grid: Float32Array;   // width * height values, 0.0–1.0
-  readonly width: number;
-  readonly height: number;
+// core/trail-map.ts — new file
+interface TrailPoint {
+  x: number; y: number;
+  age: number; force: number; maxAge: number;
+}
 
-  paint(x: number, y: number, radius: number, strength: number): void {
-    // Paint Gaussian blob at (x, y) into grid
-    const r = Math.ceil(radius);
-    for (let dy = -r; dy <= r; dy++) {
-      for (let dx = -r; dx <= r; dx++) {
-        const d = Math.sqrt(dx * dx + dy * dy) / radius;
-        if (d < 1) {
-          const ix = Math.round(x) + dx;
-          const iy = Math.round(y) + dy;
-          if (ix >= 0 && ix < this.width && iy >= 0 && iy < this.height) {
-            this.grid[iy * this.width + ix] += strength * (1 - d * d);
-          }
-        }
-      }
+export class TrailMap {
+  private trail: TrailPoint[] = [];
+  private lastX = 0; private lastY = 0;
+
+  addPoint(x: number, y: number, maxAge = 120): void {
+    const dx = x - this.lastX; const dy = y - this.lastY;
+    // Squared delta = proportional to velocity² — matches TouchTexture.js exactly
+    const force = Math.min((dx*dx + dy*dy) * 100, 1.0);
+    this.trail.push({ x, y, age: 0, force, maxAge });
+    this.lastX = x; this.lastY = y;
+  }
+
+  update(): void {
+    for (let i = this.trail.length - 1; i >= 0; i--) {
+      this.trail[i].age++;
+      if (this.trail[i].age > this.trail[i].maxAge) this.trail.splice(i, 1);
     }
   }
 
-  decay(factor: number): void {
-    // Each frame: map *= factor (e.g., 0.85)
-    for (let i = 0; i < this.grid.length; i++) {
-      this.grid[i] *= factor;
+  // Sample influence strength at grid coords (x, y)
+  sample(x: number, y: number, radius: number): number {
+    let total = 0;
+    for (const pt of this.trail) {
+      const dx = x - pt.x; const dy = y - pt.y;
+      const d2 = dx*dx + dy*dy;
+      if (d2 > radius * radius) continue;
+      const lifeFrac = pt.age / pt.maxAge;
+      // Bloom in (first 30%), fade out (last 70%) — matches TouchTexture.js
+      const intensity = lifeFrac < 0.3
+        ? easeOutSine(lifeFrac / 0.3)
+        : easeOutSine(1 - (lifeFrac - 0.3) / 0.7);
+      total += intensity * pt.force * (1 - Math.sqrt(d2) / radius);
     }
-  }
-
-  sample(x: number, y: number): number {
-    const ix = Math.round(x);
-    const iy = Math.round(y);
-    if (ix < 0 || ix >= this.width || iy < 0 || iy >= this.height) return 0;
-    return this.grid[iy * this.width + ix];
+    return Math.min(total, 1.0);
   }
 }
+
+function easeOutSine(t: number): number { return Math.sin(t * Math.PI / 2); }
 ```
 
-Physics applicator samples `influenceMap.sample(p.homeX, p.homeY)` instead of
-computing distance to cursor directly. Map decays at ~0.85/frame, creating a
-natural ripple trail:
-
-```
-Mouse moves → paint force into map
-             ↓
-Map decays each frame (ripple propagates and fades)
-             ↓
-Particles sample from map (no per-particle distance math)
+Physics applicators: call `trailMap.update()` each frame, then sample per particle:
+```typescript
+const influence = trailMap.sample(p.currentX, p.currentY, config.scatterRadius);
 ```
 
-**Benefits:** trailing ripple effect, O(1) per particle sampling, decoupled
-mouse trail from cursor position.
+**Benefits over simple decay grid:**
+- Fast swipe leaves bright trail that persists ~4s and naturally fades
+- Slow hover produces near-zero force (physically realistic)
+- Trail outlasts cursor position — ripple effect continues after mouse stops
+- Force baked at add-time means no velocity tracking needed separately
 
-**Files:** `core/influence-map.ts` (new), `physics-modes/flow-matching.ts`,
-`components/AsciiDiffusionRenderer.tsx`.
+**Files:** `core/trail-map.ts` (new), `physics-modes/flow-matching.ts`,
+`physics-modes/diffusion.ts`, `components/AsciiDiffusionRenderer.tsx`.
 
 ---
 
-**A3. Per-particle angle for directional scatter**
+**A2. Per-particle angle for directional scatter**
+*(was A3 — renumbered)*
 
 Add `angle` to `AsciiParticle`. Computed once at scene build time from the
 particle's home position relative to scene center:
 
 ```typescript
 // In scene-builder.ts / grid-to-particles.ts
-p.angle = Math.atan2(p.homeY - sceneCenterY, p.homeX - sceneCenterX)
-          + (Math.random() - 0.5) * 0.5; // ±15° random variation
+p.angle = Math.random() * Math.PI; // [0, π] half-circle — matches Particles.js
 ```
 
 In the physics applicator, use angle to create directional scatter:
@@ -216,8 +250,10 @@ if (influence > 0.01) {
 }
 ```
 
-Result: particles don't all fly directly away from the cursor. They veer along
-their intrinsic angle, creating a more organic, asymmetric scatter pattern.
+Half-circle [0, π] rather than full 2π is intentional — from the actual
+Particles.js source (`angles[j] = Math.random() * Math.PI`). Half-circle means
+particles scatter into one hemisphere rather than uniformly outward, producing
+the organic asymmetric sweep seen in the brunoimbrizi demo.
 
 **Files:** `core/types.ts` (add `angle`), `scene/grid-to-particles.ts`,
 `scene/text-to-particles.ts`, `scene/image-to-particles.ts`,
@@ -328,6 +364,15 @@ visually without needing actual ghost characters.
 
 ### Phase D — Smarter Particle Assignment (JFA-Inspired)
 
+**Note on obamify's assignment modes:** The "Optimal" mode in obamify is a full
+Kuhn-Munkres (Hungarian) algorithm run **offline** — it's pre-computed and saved
+as `assignments.json`. It is O(n³) and not feasible at runtime. The **genetic
+algorithm** is the practical runtime alternative (iterative hill-climbing with
+decaying search radius). Both outperform greedy NN for scene transitions.
+
+Our D2 uses greedy NN as the simplest correct approach. An optional upgrade
+path is the genetic algorithm from obamify (described below in D3).
+
 **D1. On-scatter greedy reassignment**
 
 When particles are scattered (their `t` resets to 0), run a quick nearest-home
@@ -425,6 +470,53 @@ function morphTransition(from: AsciiScene, to: AsciiScene): AsciiParticle[] {
 
 **Files:** `scene/assignment.ts` (new), `scene/transitions.ts`,
 `physics-modes/flow-matching.ts` (trigger reassignment on scatter).
+
+---
+
+**D3. Genetic assignment for scene transitions** *(optional upgrade to D2)*
+
+Adapted from obamify's `process_genetic()`. Better than greedy NN because it
+starts with global search and refines locally:
+
+```typescript
+// scene/assignment.ts — optional genetic variant
+export function geneticReassign(
+  particles: AsciiParticle[],
+  homes: HomeSlot[],
+  iterations = 3,
+): void {
+  // Build index: particle i is currently assigned to home i
+  const assignment = particles.map((_, i) => i);
+  let searchRadius = Math.max(homes.length ** 0.5, 4);
+
+  for (let iter = 0; iter < iterations; iter++) {
+    let swaps = 0;
+    for (let a = 0; a < particles.length; a++) {
+      // Pick random candidate home within search radius
+      const ha = assignment[a];
+      const bIdx = randomNearby(a, particles, searchRadius);
+      if (bIdx === a) continue;
+      const hb = assignment[bIdx];
+
+      const costBefore = dist2(particles[a], homes[ha]) + dist2(particles[bIdx], homes[hb]);
+      const costAfter  = dist2(particles[a], homes[hb]) + dist2(particles[bIdx], homes[ha]);
+      if (costAfter < costBefore) {
+        assignment[a] = hb; assignment[bIdx] = ha; swaps++;
+      }
+    }
+    searchRadius *= 0.8;
+    if (searchRadius < 2 && swaps < 5) break;
+  }
+  // Apply final assignment
+  for (let i = 0; i < particles.length; i++) {
+    const h = homes[assignment[i]];
+    particles[i].homeX = h.x; particles[i].homeY = h.y;
+    particles[i].char  = h.char; particles[i].brightness = h.brightness;
+  }
+}
+```
+
+**Files:** `scene/assignment.ts`.
 
 ---
 
@@ -588,14 +680,137 @@ to `PhysicsMode`), `core/physics.ts` (register), `presets/index.ts`.
 
 ---
 
+### Phase H — Intro / Outro Animation *(new)*
+
+Directly from brunoimbrizi's `show()` / `hide()` lifecycle — the most cinematic
+missing feature. The current `scattered: true` only scatters within a small
+radius. The real `show()` scatters particles across the **full canvas** in
+depth-space (Z=40) then converges to the image plane over 1.5 seconds.
+
+**H1. triggerShow() — full-canvas scatter + convergence**
+
+```typescript
+// core/lifecycle.ts — new file
+export function triggerShow(particles: AsciiParticle[], scene: AsciiScene): void {
+  for (const p of particles) {
+    // Full-canvas scatter (not radius-limited like scattered: true)
+    p.currentX = Math.random() * scene.width;
+    p.currentY = Math.random() * scene.height;
+    p.vx = (Math.random() - 0.5) * 2;
+    p.vy = (Math.random() - 0.5) * 2;
+    if (p.z !== undefined) p.z = (Math.random() - 0.5) * 4;
+    // Stagger: t ranges from −1.0 to −1.5 based on distance from canvas center
+    const dx = p.homeX - scene.width  / 2;
+    const dy = p.homeY - scene.height / 2;
+    const norm = Math.sqrt(dx*dx + dy*dy) / (scene.width * 0.5);
+    p.t = -1.0 - norm * 0.5;
+  }
+}
+```
+
+**H2. triggerHide() — scatter outward**
+
+```typescript
+export function triggerHide(particles: AsciiParticle[], scene: AsciiScene): void {
+  for (const p of particles) {
+    const dx = p.currentX - scene.width  / 2;
+    const dy = p.currentY - scene.height / 2;
+    const d  = Math.max(Math.sqrt(dx*dx + dy*dy), 0.1);
+    p.vx = (dx / d) * 8 + (Math.random() - 0.5) * 4;
+    p.vy = (dy / d) * 8 - Math.random() * 4;
+    if (p.vz !== undefined) p.vz = (Math.random() - 0.5) * 3;
+  }
+  // Caller removes scene after ~800ms
+}
+```
+
+**H3. Props / API additions to AsciiDiffusionRenderer**
+
+```typescript
+animateIn?: boolean;           // run triggerShow() on first mount (default false)
+onShowComplete?: () => void;   // fires when all particles reach t=1 for first time
+// Programmatic:
+ref.current.show(): void
+ref.current.hide(): Promise<void>  // resolves when particles leave canvas bounds
+```
+
+**Files:** `core/lifecycle.ts` (new), `components/AsciiDiffusionRenderer.tsx`.
+
+---
+
+### Phase I — obamify Physics *(new, all opt-in)*
+
+Three mechanics from morph_sim.rs, each independently toggleable via config.
+
+**I1. Cubic acceleration curve for homing** *(`cubicHoming: true`)*
+
+obamify's factor curve: `factor = min((age_secs * dst_force)³, 1000)`.
+Particles start nearly stationary, then accelerate dramatically toward home.
+Completely different feel from spring (oscillates) or linear flow matching
+(constant rate):
+
+```typescript
+// In flow-matching applicator when config.cubicHoming is true:
+const elapsed = Math.max(p.t, 0);
+const factor  = Math.min(Math.pow(elapsed * (config.dstForce ?? 0.13), 3), 1.0);
+p.vx += (p.homeX - p.currentX) * factor * dtScale;
+p.vy += (p.homeY - p.currentY) * factor * dtScale;
+// Damping still applies after: p.vx *= config.damping
+```
+
+**I2. Velocity alignment / boid flocking** *(`flockAlignment: 0–1`)*
+
+Each particle blends its velocity toward the average of nearby particles.
+From obamify: `ALIGNMENT_FACTOR = 0.8`. Particles form visible streaming groups
+during their return journey — cohesive "flocks" rather than independent paths:
+
+```typescript
+// Requires SpatialHash (core/spatial-hash.ts) for O(1) avg neighbor lookup
+if (config.flockAlignment) {
+  const neighbors = spatialHash.query(p.currentX, p.currentY, 2.0);
+  if (neighbors.length > 0) {
+    const avgVx = neighbors.reduce((s,n) => s+n.vx, 0) / neighbors.length;
+    const avgVy = neighbors.reduce((s,n) => s+n.vy, 0) / neighbors.length;
+    const a = config.flockAlignment;
+    p.vx = p.vx * (1-a) + avgVx * a;
+    p.vy = p.vy * (1-a) + avgVy * a;
+  }
+}
+```
+
+**I3. Personal space repulsion** *(`personalSpace: cells`)*
+
+Light P2P repulsion within `personalSpace` cells. From obamify:
+`PERSONAL_SPACE = 0.95`. Prevents particles stacking on the same grid cell
+during transit — creates natural packing as they arrive home:
+
+```typescript
+if (config.personalSpace) {
+  const tooClose = spatialHash.query(p.currentX, p.currentY, config.personalSpace);
+  for (const n of tooClose) {
+    if (n.id === p.id) continue;
+    const dx = p.currentX - n.currentX; const dy = p.currentY - n.currentY;
+    const d  = Math.sqrt(dx*dx + dy*dy);
+    if (d > 0.001) {
+      const push = (config.personalSpace - d) / config.personalSpace * 0.1;
+      p.vx += (dx/d) * push * dtScale; p.vy += (dy/d) * push * dtScale;
+    }
+  }
+}
+```
+
+**Files:** `core/spatial-hash.ts` (new), `physics-modes/flow-matching.ts`.
+
+---
+
 ## New Config Fields Summary
 
 Add to `ExtendedDiffusionConfig` in `core/types.ts`:
 
 ```typescript
 // Phase A
-mouseVelocityScale?: number;    // Scatter force multiplier from mouse speed (default: 1)
-influenceMapDecay?: number;     // Per-frame decay of influence map (default: 0.85)
+trailMaxAge?: number;           // Trail point max lifetime in frames (default: 120)
+trailForceScale?: number;       // Scale factor for velocity-baked force (default: 100)
 angleScatterWeight?: number;    // Weight of angle-directed vs radial scatter (default: 0.4)
 
 // Phase B
@@ -617,6 +832,12 @@ clusterPhases?: boolean;        // 2-phase cluster-aware flow (default: false)
 // Phase F
 idleAmplitude?: number;         // Idle drift amplitude in cells (default: 0.0)
 idleFlicker?: boolean;          // Idle char flickering (default: false)
+
+// Phase I (obamify physics — all opt-in)
+cubicHoming?: boolean;          // Use cubic acceleration curve (default: false)
+dstForce?: number;              // Cubic homing strength, matches obamify default: 0.13
+flockAlignment?: number;        // Boid velocity alignment 0–1 (default: 0 = off)
+personalSpace?: number;         // P2P repulsion radius in cells (default: 0 = off)
 ```
 
 New fields on `AsciiParticle`:
@@ -636,45 +857,51 @@ clusterY?: number;
 
 | File | Purpose |
 |------|---------|
-| `core/influence-map.ts` | Spatial decay map for mouse influence (touch texture) |
-| `scene/assignment.ts` | Greedy nearest-home particle assignment (JFA-inspired) |
+| `core/trail-map.ts` | Age-based trail array (replaces simple influence grid) |
+| `core/spatial-hash.ts` | O(1) avg neighbor lookup for flocking + personal space |
+| `core/lifecycle.ts` | triggerShow() / triggerHide() for intro/outro animation |
+| `scene/assignment.ts` | Greedy + genetic nearest-home particle assignment (JFA-inspired) |
 | `physics-modes/magnetic.ts` | New attract-with-flow-return mode |
 
 ## Modified Files
 
 | File | Changes |
 |------|---------|
-| `core/types.ts` | New config fields, new particle fields |
+| `core/types.ts` | New config fields, new particle fields (Phase I fields, angle, flowSpeed) |
 | `core/renderer.ts` | Z-depth char mapping, char morph during flight, velocity chars |
-| `physics-modes/flow-matching.ts` | Influence map, angle scatter, staggered t, idle drift |
-| `physics-modes/diffusion.ts` | Mouse velocity scaling, influence map |
+| `physics-modes/flow-matching.ts` | TrailMap, angle scatter, staggered t, idle drift, cubic homing, flocking |
+| `physics-modes/diffusion.ts` | TrailMap integration |
+| `components/AsciiDiffusionRenderer.tsx` | TrailMap integration, animateIn prop, show/hide ref API |
 | `scene/grid-to-particles.ts` | Compute `angle`, `flowSpeed` at build time |
 | `scene/text-to-particles.ts` | Same: `angle`, `flowSpeed` |
 | `scene/image-to-particles.ts` | Same: `angle`, `flowSpeed`; cluster centroid computation |
-| `scene/transitions.ts` | Greedy nearest-neighbor morph matching |
+| `scene/transitions.ts` | Greedy / genetic nearest-neighbor morph matching |
 | `core/physics.ts` | Register `magnetic` mode |
-| `presets/index.ts` | New presets using new config fields |
+| `presets/index.ts` | New presets using new config fields (flock, cinema, etc.) |
 
 ---
 
 ## Implementation Order
 
-| # | Phase | Files | Priority |
-|---|-------|-------|----------|
-| 1 | A3 — Per-particle angle | types, scene builders | High — visible immediately |
-| 2 | E1 — Staggered return timing | flow-matching | High — fixes mechanical look |
-| 3 | E2 — Per-particle flow speed variance | types, flow-matching | High |
-| 4 | C1 — Char morph during flight | renderer | High — "resolving" visual |
-| 5 | A1 — Mouse velocity tracking | flow-matching, diffusion | Medium |
-| 6 | A2 — Influence map | influence-map (new), applicators | Medium |
-| 7 | D2 — Scene transition matching | assignment (new), transitions | Medium |
-| 8 | D1 — On-scatter reassignment | assignment, flow-matching | Medium |
-| 9 | F1 — Idle noise drift | flow-matching | Medium |
-| 10 | B1/B2 — Z-depth simulation | types, flow-matching, renderer | Low (opt-in) |
-| 11 | E3 — 2-phase cluster flow | types, scene builders, flow-matching | Low (opt-in) |
-| 12 | G — Magnetic mode | magnetic (new), physics, presets | Low |
-| 13 | C2 — Velocity direction chars | renderer | Low (opt-in) |
-| 14 | F2 — Idle flicker | renderer | Low (opt-in) |
+| # | Phase | Priority |
+|---|-------|----------|
+| 1 | A2 — Per-particle angle (half-circle fix) | High |
+| 2 | E1 — Staggered return timing | High |
+| 3 | E2 — Per-particle flow speed variance | High |
+| 4 | C1 — Char morph during flight | High |
+| 5 | A1 — TrailMap (merges old A1+A2) | High |
+| 6 | H — Intro/Outro show()/hide() | High |
+| 7 | D1/D2 — Greedy assignment | Medium |
+| 8 | F1 — Idle noise drift | Medium |
+| 9 | I1 — Cubic homing curve | Medium |
+| 10 | B1/B2 — Z-depth simulation | Low (opt-in) |
+| 11 | I2 — Boid flocking | Low (opt-in) |
+| 12 | I3 — Personal space | Low (opt-in) |
+| 13 | D3 — Genetic assignment | Low (opt-in upgrade) |
+| 14 | E3 — 2-phase cluster flow | Low (opt-in) |
+| 15 | G — Magnetic mode | Low |
+| 16 | C2 — Velocity direction chars | Low (opt-in) |
+| 17 | F2 — Idle flicker | Low (opt-in) |
 
 ---
 
@@ -724,6 +951,14 @@ magnetic: {
   damping: 0.92,
   flowSpeed: 0.05,
 },
+
+flock: {
+  // obamify-inspired: cubic homing + boid streaming
+  cubicHoming: true, dstForce: 0.13,
+  flockAlignment: 0.6, personalSpace: 1.2,
+  staggerReturn: true,
+  scatterRadius: 10, scatterForce: 1.0, damping: 0.97,
+},
 ```
 
 ---
@@ -732,8 +967,9 @@ magnetic: {
 
 - **GPU/WebGL rendering** — The entire point of this package is ASCII text in a
   `<pre>` tag. WebGL would require a full rewrite and lose the ASCII aesthetic.
-- **Full JFA on CPU** — Greedy nearest-neighbor gives 80% of the visual benefit
-  at a fraction of the cost. True JFA is GPU-parallel and not practical here.
+- **Full JFA on CPU** — Greedy NN (D2) or genetic algorithm (D3) gives 80% of
+  the visual benefit at a fraction of the cost. True JFA is GPU-parallel and
+  not practical here.
 - **True 3D projection** — Z-depth is simulated via character density, not actual
   perspective projection. This is intentional; perspective-correct 3D would
   distort the ASCII grid layout.
