@@ -410,6 +410,9 @@ let particles = [];
 let homes = []; // saved home slots for reassignment
 let gridW = 120;
 let gridH = 60;
+let imgW = 120;  // actual image grid size (before padding)
+let imgH = 60;
+const PAD = 20;  // padding around image so particles can scatter into empty space
 let rafId = null;
 let lastTime = 0;
 let mousePos = null;
@@ -469,12 +472,15 @@ function imageToParticles(img, w, h) {
       if (ch === ' ') continue;
       // Store original RGB color from the image
       const color = `rgb(${r},${g},${b})`;
-      homes.push({ x, y, char: ch, brightness, color });
+      // Offset by PAD so the image sits centered in the larger grid
+      const px = x + PAD;
+      const py = y + PAD;
+      homes.push({ x: px, y: py, char: ch, brightness, color });
       result.push({
         id: id++,
-        homeX: x, homeY: y,
-        currentX: x + (Math.random() - 0.5) * config.scatterAmount,
-        currentY: y + (Math.random() - 0.5) * config.scatterAmount,
+        homeX: px, homeY: py,
+        currentX: px + (Math.random() - 0.5) * config.scatterAmount,
+        currentY: py + (Math.random() - 0.5) * config.scatterAmount,
         vx: 0, vy: 0,
         t: 0,
         char: ch,
@@ -832,8 +838,12 @@ function start() {
 
 function buildScene(img) {
   const aspect = img.naturalHeight / img.naturalWidth;
-  gridH = Math.round(gridW * aspect * 0.5);
-  particles = imageToParticles(img, gridW, gridH);
+  imgW = parseInt(document.getElementById('grid-w').value);
+  imgH = Math.round(imgW * aspect * 0.5);
+  // Expand render grid with padding so particles can scatter beyond the image
+  gridW = imgW + PAD * 2;
+  gridH = imgH + PAD * 2;
+  particles = imageToParticles(img, imgW, imgH);
   trailMap.clear();
   allocateGrids();
   start();
@@ -955,7 +965,7 @@ outputEl.addEventListener('mousemove', (e) => {
 });
 outputEl.addEventListener('mouseleave', () => { mousePos = null; mouseSpeed = 0; mouseVel.x = 0; mouseVel.y = 0; });
 outputEl.addEventListener('mousedown', (e) => { e.preventDefault(); mouseDown = true; });
-window.addEventListener('mouseup', () => { mouseDown = false; });
+window.addEventListener('mouseup', () => { mouseDown = false; trailMap.clear(); });
 
 // Upload
 uploadArea.addEventListener('click', () => fileInput.click());
@@ -1028,7 +1038,7 @@ const checkboxes = [
 
 // Grid slider special handler (rebuilds scene)
 document.getElementById('grid-w').addEventListener('input', function() {
-  gridW = parseInt(this.value);
+  gridW = parseInt(this.value); // buildScene will recalculate with padding
   if (loadedImg) buildScene(loadedImg);
 });
 
