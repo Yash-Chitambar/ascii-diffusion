@@ -57,6 +57,7 @@ export function textToParticles(
         char,
         brightness: brightness ?? charToBrightness(char),
         color,
+        angle: Math.random() * Math.PI,
       };
 
       particles.push(particle);
@@ -166,6 +167,7 @@ export function textToBlockParticles(
           char: '#',
           brightness: 1.0,
           color,
+          angle: Math.random() * Math.PI,
         });
       }
     }

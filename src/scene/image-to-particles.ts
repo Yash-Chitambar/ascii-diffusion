@@ -73,6 +73,8 @@ export function imageToAsciiScene(
         t: scattered ? 0 : 1,
         char,
         brightness,
+        color: `rgb(${r},${g},${b})`,
+        angle: Math.random() * Math.PI,
       });
     }
   }
@@ -82,5 +84,63 @@ export function imageToAsciiScene(
     ...configOverrides,
   };
 
+  // E2: Apply per-particle flow speed variance at build time
+  const baseFlowSpeed = mergedConfig.flowSpeed ?? 0.04;
+  const variance = mergedConfig.flowSpeedVariance ?? 0;
+  if (variance > 0) {
+    for (const p of particles) {
+      p.flowSpeed = baseFlowSpeed * (1 - variance * 0.5 + Math.random() * variance);
+    }
+  }
+
+  // E3: Compute cluster centroids via simple spatial grid clustering
+  if (mergedConfig.clusterPhases) {
+    assignClusterCentroids(particles, gridWidth, gridHeight);
+  }
+
   return { particles, width: gridWidth, height: gridHeight, config: mergedConfig };
+}
+
+/**
+ * Assign cluster centroids to particles using a spatial grid.
+ * Divides the scene into ~8x8 cell blocks, computes the average
+ * home position within each block, and sets clusterX/clusterY.
+ */
+function assignClusterCentroids(
+  particles: AsciiParticle[],
+  width: number,
+  height: number,
+): void {
+  const cellSize = Math.max(8, Math.ceil(Math.max(width, height) / 12));
+  const cols = Math.ceil(width / cellSize);
+
+  // Group particles by grid cell
+  const cells = new Map<number, AsciiParticle[]>();
+  for (const p of particles) {
+    const cx = Math.floor(p.homeX / cellSize);
+    const cy = Math.floor(p.homeY / cellSize);
+    const key = cy * cols + cx;
+    let arr = cells.get(key);
+    if (!arr) {
+      arr = [];
+      cells.set(key, arr);
+    }
+    arr.push(p);
+  }
+
+  // Compute centroid per cell and assign to particles
+  for (const group of cells.values()) {
+    let sumX = 0;
+    let sumY = 0;
+    for (const p of group) {
+      sumX += p.homeX;
+      sumY += p.homeY;
+    }
+    const cx = sumX / group.length;
+    const cy = sumY / group.length;
+    for (const p of group) {
+      p.clusterX = cx;
+      p.clusterY = cy;
+    }
+  }
 }

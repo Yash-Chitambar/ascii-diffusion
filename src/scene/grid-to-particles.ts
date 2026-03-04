@@ -1,7 +1,7 @@
 import type { AsciiParticle } from '../core/types.js';
 
 // ASCII brightness ramp (dark → bright)
-const BRIGHTNESS_RAMP = ' .:-=+*#%@';
+export const BRIGHTNESS_RAMP = ' .:-=+*#%@';
 
 /**
  * Map an ASCII character to a brightness value between 0.0 and 1.0.
@@ -76,6 +76,7 @@ export function gridToParticles(
         char,
         brightness: charToBrightness(char),
         color,
+        angle: Math.random() * Math.PI,
       });
     }
   }

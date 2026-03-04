@@ -5,6 +5,7 @@ import { gravityPhysics } from '../physics-modes/gravity.js';
 import { vortexPhysics } from '../physics-modes/vortex.js';
 import { explosionPhysics } from '../physics-modes/explosion.js';
 import { wavePhysics } from '../physics-modes/wave.js';
+import { magneticPhysics } from '../physics-modes/magnetic.js';
 
 const applicators: Record<PhysicsMode, PhysicsApplicator> = {
   'flow-matching': flowMatchingPhysics,
@@ -13,6 +14,7 @@ const applicators: Record<PhysicsMode, PhysicsApplicator> = {
   vortex: vortexPhysics,
   explosion: explosionPhysics,
   wave: wavePhysics,
+  magnetic: magneticPhysics,
 };
 
 export function getPhysicsApplicator(mode: PhysicsMode): PhysicsApplicator {

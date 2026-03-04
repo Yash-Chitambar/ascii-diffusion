@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ASCII Diffusion — Image Demo</title>
+<title>ASCII Diffusion — Flow Matching Demo</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -39,26 +39,88 @@
   #upload-area p { color: #888; font-size: 0.95rem; }
   #upload-area input { display: none; }
 
-  #controls {
-    display: flex;
-    gap: 16px;
-    align-items: center;
+  #controls-wrapper {
+    width: 100%;
+    max-width: 900px;
     margin-bottom: 16px;
+  }
+
+  .control-row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 8px;
     flex-wrap: wrap;
     justify-content: center;
   }
-  #controls label { font-size: 0.85rem; color: #aaa; }
-  #controls input[type=range] { width: 100px; }
-  #controls button {
+
+  .control-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: #111;
+    border: 1px solid #222;
+    border-radius: 6px;
+    padding: 4px 8px;
+  }
+
+  .control-group label {
+    font-size: 0.78rem;
+    color: #777;
+    white-space: nowrap;
+  }
+  .control-group input[type=range] { width: 80px; height: 4px; }
+  .control-group .val {
+    font-size: 0.75rem;
+    color: #00d4ff;
+    min-width: 32px;
+    text-align: right;
+    font-family: monospace;
+  }
+  .control-group select {
+    background: #1a1a1a;
+    color: #e0e0e0;
+    border: 1px solid #333;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.78rem;
+  }
+  .control-group input[type=checkbox] {
+    accent-color: #00d4ff;
+  }
+
+  .section-label {
+    font-size: 0.7rem;
+    color: #444;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-right: 4px;
+    font-weight: 600;
+  }
+
+  .btn-row {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    margin-bottom: 12px;
+  }
+  .btn-row button {
     background: #00d4ff;
     color: #000;
     border: none;
-    padding: 6px 16px;
+    padding: 5px 14px;
     border-radius: 6px;
     cursor: pointer;
     font-weight: 600;
+    font-size: 0.82rem;
   }
-  #controls button:hover { background: #33dfff; }
+  .btn-row button:hover { background: #33dfff; }
+  .btn-row button.secondary {
+    background: #222;
+    color: #aaa;
+    border: 1px solid #333;
+  }
+  .btn-row button.secondary:hover { background: #333; color: #fff; }
 
   #output {
     font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "Courier New", monospace;
@@ -66,12 +128,20 @@
     font-size: clamp(4px, 1vw, 12px);
     line-height: 1.0;
     letter-spacing: 0em;
-    color: #00d4ff;
+    color: #555;
     white-space: pre;
     background: #0a0a0a;
     overflow: hidden;
     cursor: crosshair;
     user-select: none;
+  }
+  #output span { white-space: pre; }
+
+  #info-bar {
+    font-size: 0.72rem;
+    color: #444;
+    margin-top: 8px;
+    font-family: monospace;
   }
 </style>
 </head>
@@ -84,26 +154,260 @@
   <input type="file" id="file-input" accept="image/*">
 </div>
 
-<div id="controls" style="display:none">
-  <label>Grid width: <input type="range" id="grid-w" min="40" max="200" value="120"> <span id="grid-w-val">120</span></label>
-  <label>Flow speed: <input type="range" id="flow-speed" min="1" max="20" value="4" step="1"> <span id="flow-speed-val">0.04</span></label>
-  <label>Scatter: <input type="range" id="scatter-r" min="10" max="100" value="40"> <span id="scatter-r-val">40</span></label>
-  <button id="re-scatter">Re-scatter</button>
+<div id="controls-wrapper" style="display:none">
+
+  <!-- Row 1: Preset + Physics Mode + Grid -->
+  <div class="control-row">
+    <div class="control-group">
+      <label>Preset</label>
+      <select id="preset-select">
+        <option value="default">Default</option>
+        <option value="cinema">Cinema</option>
+        <option value="shimmer">Shimmer</option>
+        <option value="depth">Depth</option>
+        <option value="flock">Flock</option>
+        <option value="magnetic">Magnetic</option>
+        <option value="custom">Custom</option>
+      </select>
+    </div>
+    <div class="control-group">
+      <label>Mode</label>
+      <select id="physics-mode">
+        <option value="flow-matching">Flow Matching</option>
+        <option value="magnetic">Magnetic</option>
+      </select>
+    </div>
+    <div class="control-group">
+      <label>Grid</label>
+      <input type="range" id="grid-w" min="40" max="200" value="120">
+      <span class="val" id="grid-w-val">120</span>
+    </div>
+  </div>
+
+  <!-- Row 2: Core physics -->
+  <div class="control-row">
+    <span class="section-label">Physics</span>
+    <div class="control-group">
+      <label>Flow spd</label>
+      <input type="range" id="flow-speed" min="1" max="20" value="6" step="1">
+      <span class="val" id="flow-speed-val">0.06</span>
+    </div>
+    <div class="control-group">
+      <label>Damping</label>
+      <input type="range" id="damping" min="70" max="99" value="92">
+      <span class="val" id="damping-val">0.92</span>
+    </div>
+    <div class="control-group">
+      <label>Radius</label>
+      <input type="range" id="scatter-radius" min="4" max="30" value="14">
+      <span class="val" id="scatter-radius-val">14</span>
+    </div>
+    <div class="control-group">
+      <label>Force</label>
+      <input type="range" id="scatter-force" min="1" max="40" value="15">
+      <span class="val" id="scatter-force-val">15</span>
+    </div>
+  </div>
+
+  <!-- Row 3: Angle + Trail + Stagger -->
+  <div class="control-row">
+    <span class="section-label">Scatter</span>
+    <div class="control-group">
+      <label>Angle wt</label>
+      <input type="range" id="angle-weight" min="0" max="100" value="40">
+      <span class="val" id="angle-weight-val">0.40</span>
+    </div>
+    <div class="control-group">
+      <label>Trail age</label>
+      <input type="range" id="trail-age" min="0" max="300" value="120">
+      <span class="val" id="trail-age-val">120</span>
+    </div>
+    <div class="control-group">
+      <label>Stagger</label>
+      <input type="checkbox" id="stagger-check">
+    </div>
+    <div class="control-group">
+      <label>Stagger delay</label>
+      <input type="range" id="stagger-delay" min="0" max="100" value="40">
+      <span class="val" id="stagger-delay-val">0.40</span>
+    </div>
+  </div>
+
+  <!-- Row 4: Rendering features -->
+  <div class="control-row">
+    <span class="section-label">Render</span>
+    <div class="control-group">
+      <label>Char morph</label>
+      <input type="checkbox" id="morph-check" checked>
+    </div>
+    <div class="control-group">
+      <label>Morph dist</label>
+      <input type="range" id="morph-threshold" min="1" max="20" value="3" step="0.5">
+      <span class="val" id="morph-threshold-val">3.0</span>
+    </div>
+    <div class="control-group">
+      <label>Vel chars</label>
+      <input type="checkbox" id="vel-chars-check">
+    </div>
+    <div class="control-group">
+      <label>Z-depth</label>
+      <input type="checkbox" id="zdepth-check">
+    </div>
+    <div class="control-group">
+      <label>Z strength</label>
+      <input type="range" id="z-strength" min="0" max="100" value="30">
+      <span class="val" id="z-strength-val">0.30</span>
+    </div>
+  </div>
+
+  <!-- Row 5: Idle + Obamify -->
+  <div class="control-row">
+    <span class="section-label">Idle</span>
+    <div class="control-group">
+      <label>Drift</label>
+      <input type="range" id="idle-amp" min="0" max="100" value="0">
+      <span class="val" id="idle-amp-val">0.00</span>
+    </div>
+    <div class="control-group">
+      <label>Flicker</label>
+      <input type="checkbox" id="flicker-check">
+    </div>
+
+    <span class="section-label" style="margin-left:8px">Obamify</span>
+    <div class="control-group">
+      <label>Cubic</label>
+      <input type="checkbox" id="cubic-check">
+    </div>
+    <div class="control-group">
+      <label>Dst force</label>
+      <input type="range" id="dst-force" min="1" max="50" value="13">
+      <span class="val" id="dst-force-val">0.13</span>
+    </div>
+    <div class="control-group">
+      <label>Flock</label>
+      <input type="range" id="flock-align" min="0" max="100" value="0">
+      <span class="val" id="flock-align-val">0.00</span>
+    </div>
+    <div class="control-group">
+      <label>Space</label>
+      <input type="range" id="personal-space" min="0" max="30" value="0" step="1">
+      <span class="val" id="personal-space-val">0.0</span>
+    </div>
+  </div>
+
+  <!-- Buttons -->
+  <div class="btn-row">
+    <button id="show-btn">Show (Intro)</button>
+    <button id="hide-btn">Hide (Outro)</button>
+    <button id="re-scatter">Re-scatter</button>
+    <button id="reassign-btn" class="secondary">Reassign Homes</button>
+  </div>
+
+  <!-- Initial scatter -->
+  <div class="control-row">
+    <div class="control-group">
+      <label>Init scatter</label>
+      <input type="range" id="scatter-amount" min="10" max="100" value="40">
+      <span class="val" id="scatter-amount-val">40</span>
+    </div>
+  </div>
+
 </div>
 
 <pre id="output"></pre>
+<div id="info-bar"></div>
 
 <script>
 // ── Brightness ramp (dark → bright) ──
 const BRIGHTNESS_RAMP = ' .:-=+*#%@';
+const SCATTER_CHARS = ['.', '·', ',', '`', "'", ':', ';'];
+const DIRECTION_CHARS = ['−', '\\', '|', '/'];
+const DENSIFY = { '.': ':', ',': ';', '-': '=', '+': '#', 'o': 'O', 'i': 'I', ':': '#', "'": '"', '`': "'" };
 
 function brightnessToCh(b) {
   const idx = Math.round(b * (BRIGHTNESS_RAMP.length - 1));
   return BRIGHTNESS_RAMP[Math.max(0, Math.min(idx, BRIGHTNESS_RAMP.length - 1))];
 }
 
+// ── TrailMap ──
+function easeOutSine(t) { return Math.sin(t * Math.PI / 2); }
+
+class TrailMap {
+  constructor() { this.trail = []; this.lastX = 0; this.lastY = 0; this.initialized = false; }
+  addPoint(x, y, maxAge = 120, forceScale = 100) {
+    if (!this.initialized) { this.lastX = x; this.lastY = y; this.initialized = true; return; }
+    const dx = x - this.lastX, dy = y - this.lastY;
+    const force = Math.min((dx*dx + dy*dy) * forceScale, 1.0);
+    this.trail.push({ x, y, age: 0, force, maxAge });
+    this.lastX = x; this.lastY = y;
+  }
+  update() {
+    for (let i = this.trail.length - 1; i >= 0; i--) {
+      this.trail[i].age++;
+      if (this.trail[i].age > this.trail[i].maxAge) this.trail.splice(i, 1);
+    }
+  }
+  sample(x, y, radius) {
+    let total = 0, totalDx = 0, totalDy = 0;
+    const r2 = radius * radius;
+    for (const pt of this.trail) {
+      const dx = x - pt.x, dy = y - pt.y;
+      const d2 = dx*dx + dy*dy;
+      if (d2 > r2) continue;
+      const lifeFrac = pt.age / pt.maxAge;
+      const intensity = lifeFrac < 0.3 ? easeOutSine(lifeFrac / 0.3) : easeOutSine(1 - (lifeFrac - 0.3) / 0.7);
+      const dist = Math.sqrt(d2);
+      const falloff = 1 - dist / radius;
+      const weight = intensity * pt.force * falloff;
+      total += weight;
+      if (dist > 0.01) { totalDx += (dx/dist) * weight; totalDy += (dy/dist) * weight; }
+    }
+    return { strength: Math.min(total, 1.0), dx: totalDx, dy: totalDy };
+  }
+  clear() { this.trail.length = 0; this.initialized = false; }
+}
+
+// ── SpatialHash for flocking + personal space ──
+class SpatialHash {
+  constructor(cellSize) { this.cellSize = Math.max(cellSize, 0.5); this.grid = new Map(); }
+  key(cx, cy) { return cx + ',' + cy; }
+  insert(p) {
+    const cx = Math.floor(p.currentX / this.cellSize);
+    const cy = Math.floor(p.currentY / this.cellSize);
+    const k = this.key(cx, cy);
+    if (!this.grid.has(k)) this.grid.set(k, []);
+    this.grid.get(k).push(p);
+  }
+  query(x, y, radius) {
+    const result = [];
+    const r2 = radius * radius;
+    const minCx = Math.floor((x - radius) / this.cellSize);
+    const maxCx = Math.floor((x + radius) / this.cellSize);
+    const minCy = Math.floor((y - radius) / this.cellSize);
+    const maxCy = Math.floor((y + radius) / this.cellSize);
+    for (let cx = minCx; cx <= maxCx; cx++) {
+      for (let cy = minCy; cy <= maxCy; cy++) {
+        const bucket = this.grid.get(this.key(cx, cy));
+        if (!bucket) continue;
+        for (const p of bucket) {
+          const dx = p.currentX - x, dy = p.currentY - y;
+          if (dx*dx + dy*dy <= r2) result.push(p);
+        }
+      }
+    }
+    return result;
+  }
+}
+
+// ── Cheap noise for idle drift ──
+function cheapNoise2D(x, y, t) {
+  return Math.sin(x * 0.7 + t * 0.0013) * Math.cos(y * 0.5 + t * 0.0017) * 0.5
+       + Math.sin(x * 1.3 + y * 0.9 + t * 0.001) * 0.25;
+}
+
 // ── State ──
 let particles = [];
+let homes = []; // saved home slots for reassignment
 let gridW = 120;
 let gridH = 60;
 let rafId = null;
@@ -113,9 +417,11 @@ let mouseVel = { x: 0, y: 0 };
 let mouseSpeed = 0;
 let mouseDown = false;
 let loadedImg = null;
+const trailMap = new TrailMap();
 
 // Config
 const config = {
+  physicsMode: 'flow-matching',
   flowSpeed: 0.06,
   clickScatterRadius: 14,
   clickScatterForce: 15,
@@ -123,18 +429,35 @@ const config = {
   scatterAmount: 40,
   brightnessThreshold: 0.05,
   velocityMultiplier: 1.5,
+  angleScatterWeight: 0.4,
+  staggerReturn: false,
+  staggerMaxDelay: 0.4,
+  charMorphEnabled: true,
+  charMorphThreshold: 3.0,
+  velocityCharsEnabled: false,
+  zDepthEnabled: false,
+  zScatterStrength: 0.3,
+  zReturnSpeed: 0.02,
+  idleAmplitude: 0,
+  idleFlicker: false,
+  cubicHoming: false,
+  dstForce: 0.13,
+  flockAlignment: 0,
+  personalSpace: 0,
+  trailMaxAge: 120,
+  trailForceScale: 100,
 };
 
 // ── Image → Particles ──
 function imageToParticles(img, w, h) {
   const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
+  canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext('2d');
   ctx.drawImage(img, 0, 0, w, h);
   const data = ctx.getImageData(0, 0, w, h).data;
 
   const result = [];
+  homes = [];
   let id = 0;
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -144,6 +467,9 @@ function imageToParticles(img, w, h) {
       if (brightness < config.brightnessThreshold) continue;
       const ch = brightnessToCh(brightness);
       if (ch === ' ') continue;
+      // Store original RGB color from the image
+      const color = `rgb(${r},${g},${b})`;
+      homes.push({ x, y, char: ch, brightness, color });
       result.push({
         id: id++,
         homeX: x, homeY: y,
@@ -153,86 +479,274 @@ function imageToParticles(img, w, h) {
         t: 0,
         char: ch,
         brightness,
+        color,
+        angle: Math.random() * Math.PI,
+        z: 0, vz: 0,
       });
     }
   }
   return result;
 }
 
-// ── Physics: flow matching with click-to-scatter ──
-function applyPhysics(dt) {
-  const dtScale = dt / 16.67;
+// ── Greedy nearest-neighbor reassignment ──
+function reassignHomes() {
+  if (!homes.length || !particles.length) return;
+  const n = Math.min(particles.length, homes.length);
+  const claimed = new Set();
 
-  const radiusSq = config.clickScatterRadius * config.clickScatterRadius;
-  const speedBoost = mouseDown ? 1 + mouseSpeed * config.velocityMultiplier : 1;
-  const dampingFactor = Math.pow(config.damping, dtScale);
-
-  for (const p of particles) {
-    // 1. Mouse repulsion — only on click
-    if (mousePos && mouseDown) {
-      const dx = p.currentX - mousePos.x;
-      const dy = p.currentY - mousePos.y;
-      const distSq = dx * dx + dy * dy;
-
-      if (distSq < radiusSq && distSq > 0.01) {
-        const dist = Math.sqrt(distSq);
-        const force = (config.clickScatterForce * speedBoost) / distSq;
-
-        p.vx += ((dx / dist) * force + mouseVel.x * 0.2) * dtScale;
-        p.vy += ((dy / dist) * force + mouseVel.y * 0.2) * dtScale;
-        p.t = 0;
-      }
+  // Sort by distance to nearest home
+  const indexed = particles.slice(0, n).map((p, i) => {
+    let minD = Infinity;
+    for (let h = 0; h < homes.length; h++) {
+      const dx = p.currentX - homes[h].x, dy = p.currentY - homes[h].y;
+      minD = Math.min(minD, dx*dx + dy*dy);
     }
+    return { idx: i, minD };
+  });
+  indexed.sort((a, b) => a.minD - b.minD);
 
-    // 2. Damping
-    p.vx *= dampingFactor;
-    p.vy *= dampingFactor;
-
-    // 3. Integrate scatter momentum
-    p.currentX += p.vx * dtScale;
-    p.currentY += p.vy * dtScale;
-
-    // 4. Flow matching: smooth lerp toward home
-    if (p.t < 1) {
-      const prevT = p.t;
-      p.t = Math.min(p.t + config.flowSpeed * dtScale, 1);
-      const remaining = 1 - prevT;
-      const alpha = remaining > 0.001 ? 1 - (1 - p.t) / remaining : 1;
-
-      const homeDx = p.homeX - p.currentX;
-      const homeDy = p.homeY - p.currentY;
-      p.currentX += homeDx * alpha;
-      p.currentY += homeDy * alpha;
-
-      // Snap when close
-      const newDx = p.homeX - p.currentX;
-      const newDy = p.homeY - p.currentY;
-      if (newDx * newDx + newDy * newDy < 0.01) {
-        p.currentX = p.homeX;
-        p.currentY = p.homeY;
-        p.vx = 0; p.vy = 0;
-        p.t = 1;
-      }
+  for (const entry of indexed) {
+    const p = particles[entry.idx];
+    let best = -1, bestD = Infinity;
+    for (let h = 0; h < homes.length; h++) {
+      if (claimed.has(h)) continue;
+      const dx = p.currentX - homes[h].x, dy = p.currentY - homes[h].y;
+      const d = dx*dx + dy*dy;
+      if (d < bestD) { bestD = d; best = h; }
+    }
+    if (best >= 0) {
+      claimed.add(best);
+      p.homeX = homes[best].x;
+      p.homeY = homes[best].y;
+      p.char = homes[best].char;
+      p.brightness = homes[best].brightness;
+      p.color = homes[best].color;
+      p.t = 0;
     }
   }
 }
 
-// ── Renderer: brightest-wins grid → string ──
-// Pre-allocated grids (rebuilt when scene changes)
+// ── Physics ──
+function applyPhysics(dt) {
+  const dtScale = dt / 16.67;
+  const radiusSq = config.clickScatterRadius * config.clickScatterRadius;
+  const speedBoost = mouseDown ? 1 + mouseSpeed * config.velocityMultiplier : 1;
+  const dampingFactor = Math.pow(config.damping, dtScale);
+  const time = performance.now();
+  const angleWeight = config.angleScatterWeight;
+  const isMagnetic = config.physicsMode === 'magnetic';
+
+  // Update trail map
+  if (mousePos && mouseDown) {
+    trailMap.addPoint(mousePos.x, mousePos.y, config.trailMaxAge, config.trailForceScale);
+  }
+  trailMap.update();
+
+  // Build spatial hash if needed
+  let spatialHash = null;
+  if (config.flockAlignment > 0 || config.personalSpace > 0) {
+    const cellSz = Math.max(config.flockAlignment > 0 ? 2.0 : 0, config.personalSpace || 0);
+    spatialHash = new SpatialHash(cellSz);
+    for (const p of particles) spatialHash.insert(p);
+  }
+
+  for (const p of particles) {
+    let scattered = false;
+
+    // 1. Mouse interaction
+    if (mousePos && mouseDown) {
+      if (isMagnetic) {
+        // Magnetic: attract TOWARD cursor
+        const dx = mousePos.x - p.currentX;
+        const dy = mousePos.y - p.currentY;
+        const distSq = dx * dx + dy * dy;
+        if (distSq < radiusSq && distSq > 0.01) {
+          const dist = Math.sqrt(distSq);
+          const force = config.clickScatterForce / (distSq + 0.5);
+          p.vx += (dx / dist) * force * dtScale;
+          p.vy += (dy / dist) * force * dtScale;
+          scattered = true;
+        }
+      } else {
+        // Trail-based influence
+        const influence = trailMap.sample(p.currentX, p.currentY, config.clickScatterRadius);
+        if (influence.strength > 0.01) {
+          const angle = p.angle || 0;
+          const pushX = influence.dx * (1 - angleWeight) + Math.cos(angle) * angleWeight;
+          const pushY = influence.dy * (1 - angleWeight) + Math.sin(angle) * angleWeight;
+          p.vx += (pushX * influence.strength * config.clickScatterForce * speedBoost + mouseVel.x * 0.2) * dtScale;
+          p.vy += (pushY * influence.strength * config.clickScatterForce * speedBoost + mouseVel.y * 0.2) * dtScale;
+          scattered = true;
+        }
+
+        // Direct distance-based
+        const dx = p.currentX - mousePos.x;
+        const dy = p.currentY - mousePos.y;
+        const distSq = dx * dx + dy * dy;
+        if (distSq < radiusSq && distSq > 0.01) {
+          const dist = Math.sqrt(distSq);
+          const force = (config.clickScatterForce * speedBoost) / distSq;
+          const angle = p.angle || 0;
+          p.vx += ((dx/dist * (1-angleWeight) + Math.cos(angle) * angleWeight) * force + mouseVel.x * 0.2) * dtScale;
+          p.vy += ((dy/dist * (1-angleWeight) + Math.sin(angle) * angleWeight) * force + mouseVel.y * 0.2) * dtScale;
+
+          if (config.zDepthEnabled) {
+            p.vz += force * config.zScatterStrength * (Math.random() - 0.5) * dtScale;
+          }
+          scattered = true;
+        }
+      }
+    }
+
+    // Reset flow time on scatter
+    if (scattered) {
+      if (config.staggerReturn) {
+        const dist = Math.sqrt((p.currentX - p.homeX)**2 + (p.currentY - p.homeY)**2);
+        const maxDist = config.clickScatterRadius * 2;
+        p.t = -(dist / maxDist) * config.staggerMaxDelay - Math.random() * config.staggerMaxDelay * 0.5;
+      } else {
+        p.t = 0;
+      }
+    }
+
+    // 2. Boid velocity alignment
+    if (config.flockAlignment > 0 && spatialHash) {
+      const neighbors = spatialHash.query(p.currentX, p.currentY, 2.0);
+      let avgVx = 0, avgVy = 0, count = 0;
+      for (const n of neighbors) {
+        if (n.id === p.id) continue;
+        avgVx += n.vx; avgVy += n.vy; count++;
+      }
+      if (count > 0) {
+        avgVx /= count; avgVy /= count;
+        const a = config.flockAlignment;
+        p.vx = p.vx * (1 - a) + avgVx * a;
+        p.vy = p.vy * (1 - a) + avgVy * a;
+      }
+    }
+
+    // 3. Personal space repulsion
+    if (config.personalSpace > 0 && spatialHash) {
+      const tooClose = spatialHash.query(p.currentX, p.currentY, config.personalSpace);
+      for (const n of tooClose) {
+        if (n.id === p.id) continue;
+        const dx = p.currentX - n.currentX, dy = p.currentY - n.currentY;
+        const d = Math.sqrt(dx*dx + dy*dy);
+        if (d > 0.001 && d < config.personalSpace) {
+          const push = (config.personalSpace - d) / config.personalSpace * 0.1;
+          p.vx += (dx/d) * push * dtScale;
+          p.vy += (dy/d) * push * dtScale;
+        }
+      }
+    }
+
+    // 4. Damping
+    p.vx *= dampingFactor;
+    p.vy *= dampingFactor;
+
+    // 5. Integrate
+    p.currentX += p.vx * dtScale;
+    p.currentY += p.vy * dtScale;
+
+    // Z-depth integration
+    if (config.zDepthEnabled) {
+      p.vz *= dampingFactor;
+      p.z = Math.max(-2, Math.min(2, p.z + p.vz * dtScale + (0 - p.z) * config.zReturnSpeed * dtScale));
+    }
+
+    // 6. Flow matching
+    if (p.t < 1) {
+      const prevT = p.t;
+      p.t = Math.min(p.t + config.flowSpeed * dtScale, 1);
+
+      if (p.t >= 0 && prevT < 1) {
+        const effectiveT = Math.max(p.t, 0);
+        const effectivePrevT = Math.max(prevT, 0);
+
+        if (config.cubicHoming) {
+          const factor = Math.min(Math.pow(effectiveT * config.dstForce * 10, 3), 1.0);
+          p.vx += (p.homeX - p.currentX) * factor * dtScale;
+          p.vy += (p.homeY - p.currentY) * factor * dtScale;
+        } else {
+          const remaining = 1 - effectivePrevT;
+          const alpha = remaining > 0.001 ? 1 - (1 - effectiveT) / remaining : 1;
+          p.currentX += (p.homeX - p.currentX) * alpha;
+          p.currentY += (p.homeY - p.currentY) * alpha;
+        }
+
+        const dx = p.homeX - p.currentX, dy = p.homeY - p.currentY;
+        if (dx*dx + dy*dy < 0.01) {
+          p.currentX = p.homeX; p.currentY = p.homeY;
+          p.vx = 0; p.vy = 0; p.t = 1;
+        }
+      }
+    }
+
+    // 7. Idle drift
+    if (p.t === 1 && config.idleAmplitude > 0) {
+      const noise = cheapNoise2D(p.homeX, p.homeY, time);
+      p.currentX = p.homeX + noise * config.idleAmplitude;
+      p.currentY = p.homeY + noise * config.idleAmplitude * 0.5;
+    }
+  }
+}
+
+// ── Renderer ──
 let renderGrid = [];
 let renderBGrid = [];
+let renderColorGrid = [];
 
 function allocateGrids() {
   renderGrid = Array.from({ length: gridH }, () => new Array(gridW).fill(' '));
   renderBGrid = Array.from({ length: gridH }, () => new Array(gridW).fill(-1));
+  renderColorGrid = Array.from({ length: gridH }, () => new Array(gridW).fill(null));
+}
+
+function getEffectiveChar(p) {
+  // Velocity direction chars
+  if (config.velocityCharsEnabled) {
+    const speed = Math.sqrt(p.vx*p.vx + p.vy*p.vy);
+    if (speed > 1.5) {
+      const vAngle = Math.atan2(p.vy, p.vx);
+      const sector = Math.round(vAngle / (Math.PI / 4)) % 4;
+      return DIRECTION_CHARS[Math.abs(sector)];
+    }
+  }
+
+  // Z-depth char density
+  if (config.zDepthEnabled) {
+    const z = p.z || 0;
+    if (z > 1.5) return ' ';
+    if (z > 0.8) return '.';
+    if (z < -0.8) return DENSIFY[p.char] || p.char;
+  }
+
+  // Distance-based char substitution
+  if (config.charMorphEnabled) {
+    const homeDist = Math.sqrt((p.currentX - p.homeX)**2 + (p.currentY - p.homeY)**2);
+    if (homeDist > config.charMorphThreshold) {
+      return SCATTER_CHARS[Math.floor(p.id * 7 + homeDist) % SCATTER_CHARS.length];
+    }
+  }
+
+  // Idle flicker
+  if (config.idleFlicker && p.t === 1 && Math.random() < 0.002) {
+    const idx = BRIGHTNESS_RAMP.indexOf(p.char);
+    if (idx >= 0) {
+      const offset = Math.random() < 0.5 ? -1 : 1;
+      return BRIGHTNESS_RAMP[Math.max(0, Math.min(BRIGHTNESS_RAMP.length - 1, idx + offset))];
+    }
+  }
+
+  return p.char;
 }
 
 function render() {
-  // Clear grids in-place
   for (let y = 0; y < gridH; y++) {
     for (let x = 0; x < gridW; x++) {
       renderGrid[y][x] = ' ';
       renderBGrid[y][x] = -1;
+      renderColorGrid[y][x] = null;
     }
   }
 
@@ -241,152 +755,330 @@ function render() {
     const y = Math.round(p.currentY);
     if (x >= 0 && x < gridW && y >= 0 && y < gridH) {
       if (p.brightness > renderBGrid[y][x]) {
-        renderGrid[y][x] = p.char;
+        renderGrid[y][x] = getEffectiveChar(p);
         renderBGrid[y][x] = p.brightness;
+        renderColorGrid[y][x] = p.color || null;
       }
     }
   }
 
-  const lines = [];
+  // Build colored HTML with run-length encoding for spans of the same color
+  const parts = [];
   for (let y = 0; y < gridH; y++) {
-    lines.push(renderGrid[y].join(''));
+    let runColor = renderColorGrid[y][0];
+    let runChars = renderGrid[y][0];
+
+    for (let x = 1; x < gridW; x++) {
+      const c = renderColorGrid[y][x];
+      if (c === runColor) {
+        runChars += renderGrid[y][x];
+      } else {
+        // Flush run
+        if (runColor) {
+          parts.push('<span style="color:', runColor, '">', escapeHtml(runChars), '</span>');
+        } else {
+          parts.push(escapeHtml(runChars));
+        }
+        runColor = c;
+        runChars = renderGrid[y][x];
+      }
+    }
+    // Flush last run
+    if (runColor) {
+      parts.push('<span style="color:', runColor, '">', escapeHtml(runChars), '</span>');
+    } else {
+      parts.push(escapeHtml(runChars));
+    }
+    if (y < gridH - 1) parts.push('\n');
   }
-  return lines.join('\n');
+  return parts.join('');
 }
 
-// ── Animation loop (uncapped — runs at display refresh rate) ──
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ── Animation loop ──
+let frameCount = 0;
+let fpsTime = 0;
+let fps = 0;
+
 function loop(time) {
-  const dt = Math.min(time - lastTime, 33); // tighter clamp for smoother recovery
+  const dt = Math.min(time - lastTime, 33);
   lastTime = time;
   applyPhysics(dt);
-  outputEl.textContent = render();
+  outputEl.innerHTML = render();
+
+  // FPS counter
+  frameCount++;
+  if (time - fpsTime > 1000) {
+    fps = frameCount;
+    frameCount = 0;
+    fpsTime = time;
+    const atHome = particles.filter(p => p.t >= 1).length;
+    infoBar.textContent = `${particles.length} particles | ${atHome} home | ${fps} fps | trail: ${trailMap.trail.length} pts`;
+  }
+
   rafId = requestAnimationFrame(loop);
 }
 
 function start() {
   if (rafId) cancelAnimationFrame(rafId);
   lastTime = performance.now();
+  fpsTime = lastTime;
+  frameCount = 0;
   rafId = requestAnimationFrame(loop);
 }
 
 function buildScene(img) {
-  // Compute grid height to preserve aspect ratio
-  // Characters are ~2x taller than wide, so halve the vertical resolution
   const aspect = img.naturalHeight / img.naturalWidth;
   gridH = Math.round(gridW * aspect * 0.5);
   particles = imageToParticles(img, gridW, gridH);
+  trailMap.clear();
   allocateGrids();
   start();
 }
 
-// ── DOM wiring ──
+// ── Lifecycle ──
+function triggerShow() {
+  for (const p of particles) {
+    p.currentX = Math.random() * gridW;
+    p.currentY = Math.random() * gridH;
+    p.vx = (Math.random() - 0.5) * 2;
+    p.vy = (Math.random() - 0.5) * 2;
+    if (config.zDepthEnabled) p.z = (Math.random() - 0.5) * 4;
+    const dx = p.homeX - gridW / 2, dy = p.homeY - gridH / 2;
+    const norm = Math.sqrt(dx*dx + dy*dy) / (gridW * 0.5);
+    p.t = -1.0 - norm * 0.5;
+  }
+}
+
+function triggerHide() {
+  for (const p of particles) {
+    const dx = p.currentX - gridW / 2, dy = p.currentY - gridH / 2;
+    const d = Math.max(Math.sqrt(dx*dx + dy*dy), 0.1);
+    p.vx = (dx/d) * 8 + (Math.random() - 0.5) * 4;
+    p.vy = (dy/d) * 8 - Math.random() * 4;
+    p.t = 2;
+  }
+}
+
+// ── Presets ──
+const PRESETS = {
+  default: {
+    physicsMode: 'flow-matching', staggerReturn: false, charMorphEnabled: true,
+    flowSpeed: 0.06, idleAmplitude: 0, idleFlicker: false,
+    zDepthEnabled: false, cubicHoming: false, flockAlignment: 0,
+    personalSpace: 0, angleScatterWeight: 0.4, velocityCharsEnabled: false,
+    damping: 0.92, clickScatterRadius: 14, clickScatterForce: 15,
+  },
+  cinema: {
+    physicsMode: 'flow-matching', staggerReturn: true, staggerMaxDelay: 0.5,
+    charMorphEnabled: true, flowSpeed: 0.035,
+    idleAmplitude: 0, idleFlicker: false,
+    zDepthEnabled: false, cubicHoming: false, flockAlignment: 0, personalSpace: 0,
+    damping: 0.90, clickScatterRadius: 10, clickScatterForce: 18,
+  },
+  shimmer: {
+    physicsMode: 'flow-matching', staggerReturn: true,
+    idleAmplitude: 0.2, idleFlicker: true, flowSpeed: 0.06,
+    charMorphEnabled: true, zDepthEnabled: false, cubicHoming: false,
+    flockAlignment: 0, personalSpace: 0,
+    damping: 0.94, clickScatterRadius: 6, clickScatterForce: 8,
+  },
+  depth: {
+    physicsMode: 'flow-matching', zDepthEnabled: true, zScatterStrength: 0.6,
+    charMorphEnabled: true, staggerReturn: true,
+    idleAmplitude: 0, idleFlicker: false, cubicHoming: false,
+    flockAlignment: 0, personalSpace: 0,
+    damping: 0.88, clickScatterRadius: 12, clickScatterForce: 20,
+  },
+  flock: {
+    physicsMode: 'flow-matching', cubicHoming: true, dstForce: 0.13,
+    flockAlignment: 0.6, personalSpace: 1.2,
+    staggerReturn: true, charMorphEnabled: true,
+    zDepthEnabled: false, idleAmplitude: 0, idleFlicker: false,
+    damping: 0.97, clickScatterRadius: 10, clickScatterForce: 15,
+  },
+  magnetic: {
+    physicsMode: 'magnetic', staggerReturn: false,
+    charMorphEnabled: true, flowSpeed: 0.05,
+    idleAmplitude: 0, idleFlicker: false,
+    zDepthEnabled: false, cubicHoming: false, flockAlignment: 0, personalSpace: 0,
+    damping: 0.92, clickScatterRadius: 14, clickScatterForce: 15,
+  },
+};
+
+function applyPreset(name) {
+  if (name === 'custom') return; // don't reset anything
+  const preset = PRESETS[name];
+  if (!preset) return;
+  Object.assign(config, preset);
+  syncControlsFromConfig();
+}
+
+// ── DOM ──
 const outputEl = document.getElementById('output');
 const uploadArea = document.getElementById('upload-area');
 const fileInput = document.getElementById('file-input');
-const controlsEl = document.getElementById('controls');
+const controlsWrapper = document.getElementById('controls-wrapper');
+const infoBar = document.getElementById('info-bar');
 
-// Measure actual character size using a hidden span
+// Character measurement
 const measureSpan = document.createElement('span');
 measureSpan.textContent = 'M';
-measureSpan.style.position = 'absolute';
-measureSpan.style.visibility = 'hidden';
+measureSpan.style.cssText = 'position:absolute;visibility:hidden;font-feature-settings:"liga" 0,"calt" 0';
 measureSpan.style.fontFamily = getComputedStyle(outputEl).fontFamily;
 measureSpan.style.fontSize = getComputedStyle(outputEl).fontSize;
 measureSpan.style.lineHeight = getComputedStyle(outputEl).lineHeight;
 measureSpan.style.letterSpacing = getComputedStyle(outputEl).letterSpacing;
-measureSpan.style.fontFeatureSettings = '"liga" 0, "calt" 0';
 document.body.appendChild(measureSpan);
 
 let charW = measureSpan.getBoundingClientRect().width;
 let charH = measureSpan.getBoundingClientRect().height;
-
-// Re-measure on resize (font size uses clamp)
 window.addEventListener('resize', () => {
   measureSpan.style.fontSize = getComputedStyle(outputEl).fontSize;
   charW = measureSpan.getBoundingClientRect().width;
   charH = measureSpan.getBoundingClientRect().height;
 });
 
-// Mouse tracking — position, velocity, and click state
+// Mouse tracking
 outputEl.addEventListener('mousemove', (e) => {
   const rect = outputEl.getBoundingClientRect();
-  const newPos = {
-    x: (e.clientX - rect.left) / charW,
-    y: (e.clientY - rect.top) / charH,
-  };
+  const newPos = { x: (e.clientX - rect.left) / charW, y: (e.clientY - rect.top) / charH };
   if (mousePos) {
     mouseVel.x = newPos.x - mousePos.x;
     mouseVel.y = newPos.y - mousePos.y;
-    mouseSpeed = Math.sqrt(mouseVel.x * mouseVel.x + mouseVel.y * mouseVel.y);
+    mouseSpeed = Math.sqrt(mouseVel.x*mouseVel.x + mouseVel.y*mouseVel.y);
   }
   mousePos = newPos;
 });
-outputEl.addEventListener('mouseleave', () => {
-  mousePos = null;
-  mouseSpeed = 0;
-  mouseVel.x = 0; mouseVel.y = 0;
-});
+outputEl.addEventListener('mouseleave', () => { mousePos = null; mouseSpeed = 0; mouseVel.x = 0; mouseVel.y = 0; });
 outputEl.addEventListener('mousedown', (e) => { e.preventDefault(); mouseDown = true; });
 window.addEventListener('mouseup', () => { mouseDown = false; });
 
-// Upload handling
+// Upload
 uploadArea.addEventListener('click', () => fileInput.click());
 uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('dragover'); });
 uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
 uploadArea.addEventListener('drop', (e) => {
-  e.preventDefault();
-  uploadArea.classList.remove('dragover');
-  const file = e.dataTransfer.files[0];
-  if (file) loadFile(file);
+  e.preventDefault(); uploadArea.classList.remove('dragover');
+  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
 });
-fileInput.addEventListener('change', () => {
-  if (fileInput.files[0]) loadFile(fileInput.files[0]);
-});
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); });
 
 function loadFile(file) {
   const reader = new FileReader();
   reader.onload = () => {
     const img = new Image();
-    img.onload = () => {
-      loadedImg = img;
-      controlsEl.style.display = 'flex';
-      buildScene(img);
-    };
+    img.onload = () => { loadedImg = img; controlsWrapper.style.display = 'block'; buildScene(img); };
     img.src = reader.result;
   };
   reader.readAsDataURL(file);
 }
 
-// Controls
-const gridWSlider = document.getElementById('grid-w');
-const gridWVal = document.getElementById('grid-w-val');
-gridWSlider.addEventListener('input', () => {
-  gridW = parseInt(gridWSlider.value);
-  gridWVal.textContent = gridW;
+// ── Control wiring ── helper to bind slider ↔ config
+function bindSlider(id, configKey, transform, displayFn) {
+  const el = document.getElementById(id);
+  const valEl = document.getElementById(id + '-val');
+  el.addEventListener('input', () => {
+    config[configKey] = transform(el.value);
+    valEl.textContent = displayFn(config[configKey]);
+    setPresetCustom();
+  });
+  return { el, valEl, configKey, transform, displayFn };
+}
+
+function bindCheckbox(id, configKey) {
+  const el = document.getElementById(id);
+  el.addEventListener('change', () => { config[configKey] = el.checked; setPresetCustom(); });
+  return { el, configKey };
+}
+
+function setPresetCustom() {
+  document.getElementById('preset-select').value = 'custom';
+}
+
+const sliders = [
+  bindSlider('grid-w', null, v => parseInt(v), v => v),
+  bindSlider('flow-speed', 'flowSpeed', v => parseInt(v) / 100, v => v.toFixed(2)),
+  bindSlider('damping', 'damping', v => parseInt(v) / 100, v => v.toFixed(2)),
+  bindSlider('scatter-radius', 'clickScatterRadius', v => parseInt(v), v => v),
+  bindSlider('scatter-force', 'clickScatterForce', v => parseInt(v), v => v),
+  bindSlider('angle-weight', 'angleScatterWeight', v => parseInt(v) / 100, v => v.toFixed(2)),
+  bindSlider('trail-age', 'trailMaxAge', v => parseInt(v), v => v),
+  bindSlider('stagger-delay', 'staggerMaxDelay', v => parseInt(v) / 100, v => v.toFixed(2)),
+  bindSlider('morph-threshold', 'charMorphThreshold', v => parseFloat(v), v => v.toFixed(1)),
+  bindSlider('z-strength', 'zScatterStrength', v => parseInt(v) / 100, v => v.toFixed(2)),
+  bindSlider('idle-amp', 'idleAmplitude', v => parseInt(v) / 100, v => v.toFixed(2)),
+  bindSlider('dst-force', 'dstForce', v => parseInt(v) / 100, v => v.toFixed(2)),
+  bindSlider('flock-align', 'flockAlignment', v => parseInt(v) / 100, v => v.toFixed(2)),
+  bindSlider('personal-space', 'personalSpace', v => parseInt(v) / 10, v => v.toFixed(1)),
+  bindSlider('scatter-amount', 'scatterAmount', v => parseInt(v), v => v),
+];
+
+const checkboxes = [
+  bindCheckbox('stagger-check', 'staggerReturn'),
+  bindCheckbox('morph-check', 'charMorphEnabled'),
+  bindCheckbox('vel-chars-check', 'velocityCharsEnabled'),
+  bindCheckbox('zdepth-check', 'zDepthEnabled'),
+  bindCheckbox('flicker-check', 'idleFlicker'),
+  bindCheckbox('cubic-check', 'cubicHoming'),
+];
+
+// Grid slider special handler (rebuilds scene)
+document.getElementById('grid-w').addEventListener('input', function() {
+  gridW = parseInt(this.value);
   if (loadedImg) buildScene(loadedImg);
 });
 
-const flowSpeedSlider = document.getElementById('flow-speed');
-const flowSpeedVal = document.getElementById('flow-speed-val');
-flowSpeedSlider.addEventListener('input', () => {
-  config.flowSpeed = parseInt(flowSpeedSlider.value) / 100;
-  flowSpeedVal.textContent = config.flowSpeed.toFixed(2);
+// Sync all controls from config state (after preset change)
+function syncControlsFromConfig() {
+  document.getElementById('physics-mode').value = config.physicsMode;
+  for (const s of sliders) {
+    if (!s.configKey) continue;
+    // Reverse the transform to get slider value
+    const val = config[s.configKey];
+    s.valEl.textContent = s.displayFn(val);
+    // Approximate reverse: try common patterns
+    const el = s.el;
+    if (s.configKey === 'flowSpeed') el.value = Math.round(val * 100);
+    else if (s.configKey === 'damping') el.value = Math.round(val * 100);
+    else if (s.configKey === 'angleScatterWeight') el.value = Math.round(val * 100);
+    else if (s.configKey === 'staggerMaxDelay') el.value = Math.round(val * 100);
+    else if (s.configKey === 'zScatterStrength') el.value = Math.round(val * 100);
+    else if (s.configKey === 'idleAmplitude') el.value = Math.round(val * 100);
+    else if (s.configKey === 'dstForce') el.value = Math.round(val * 100);
+    else if (s.configKey === 'flockAlignment') el.value = Math.round(val * 100);
+    else if (s.configKey === 'personalSpace') el.value = Math.round(val * 10);
+    else el.value = val;
+  }
+  for (const c of checkboxes) {
+    c.el.checked = !!config[c.configKey];
+  }
+}
+
+// Selects
+document.getElementById('preset-select').addEventListener('change', function() {
+  applyPreset(this.value);
+});
+document.getElementById('physics-mode').addEventListener('change', function() {
+  config.physicsMode = this.value;
+  setPresetCustom();
 });
 
-const scatterSlider = document.getElementById('scatter-r');
-const scatterVal = document.getElementById('scatter-r-val');
-scatterSlider.addEventListener('input', () => {
-  config.scatterAmount = parseInt(scatterSlider.value);
-  scatterVal.textContent = config.scatterAmount;
-});
-
+// Buttons
 document.getElementById('re-scatter').addEventListener('click', () => {
   for (const p of particles) {
     p.currentX = p.homeX + (Math.random() - 0.5) * config.scatterAmount;
     p.currentY = p.homeY + (Math.random() - 0.5) * config.scatterAmount;
-    p.vx = 0; p.vy = 0;
-    p.t = 0;
+    p.vx = 0; p.vy = 0; p.t = 0;
   }
+});
+document.getElementById('show-btn').addEventListener('click', triggerShow);
+document.getElementById('hide-btn').addEventListener('click', triggerHide);
+document.getElementById('reassign-btn').addEventListener('click', () => {
+  reassignHomes();
 });
 </script>
 </body>

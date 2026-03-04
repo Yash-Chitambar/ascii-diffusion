@@ -26,31 +26,61 @@ export function transitionScenes(
 
 function morphTransition(from: AsciiScene, to: AsciiScene): AsciiScene {
   const oldParticles = from.particles;
-  const newTargets = to.particles;
+  const toHomes = to.particles.map((p) => ({
+    x: p.homeX,
+    y: p.homeY,
+    char: p.char,
+    brightness: p.brightness,
+    color: p.color,
+    angle: p.angle,
+  }));
   const result: AsciiParticle[] = [];
 
-  // Reuse existing particles, update their home positions
-  const reuseCount = Math.min(oldParticles.length, newTargets.length);
+  // Greedy nearest assignment: each old particle claims the new home closest
+  // to its CURRENT position (not home position — it may be scattered)
+  const reuseCount = Math.min(oldParticles.length, toHomes.length);
+  const claimed = new Set<number>();
 
   for (let i = 0; i < reuseCount; i++) {
-    result.push({
-      ...oldParticles[i],
-      homeX: newTargets[i].homeX,
-      homeY: newTargets[i].homeY,
-      char: newTargets[i].char,
-      brightness: newTargets[i].brightness,
-      color: newTargets[i].color,
-      t: 0, // Reset flow time for return journey
-    });
+    const fp = oldParticles[i];
+    let best = -1;
+    let bestDist = Infinity;
+
+    for (let h = 0; h < toHomes.length; h++) {
+      if (claimed.has(h)) continue;
+      const dx = fp.currentX - toHomes[h].x;
+      const dy = fp.currentY - toHomes[h].y;
+      const d = dx * dx + dy * dy;
+      if (d < bestDist) {
+        bestDist = d;
+        best = h;
+      }
+    }
+
+    if (best >= 0) {
+      claimed.add(best);
+      result.push({
+        ...fp,
+        homeX: toHomes[best].x,
+        homeY: toHomes[best].y,
+        char: toHomes[best].char,
+        brightness: toHomes[best].brightness,
+        color: toHomes[best].color,
+        angle: toHomes[best].angle,
+        t: 0, // Reset flow time for return journey
+      });
+    }
   }
 
   // New scene has more particles — spawn extras from center
-  if (newTargets.length > oldParticles.length) {
+  if (toHomes.length > oldParticles.length) {
     const centerX = to.width / 2;
     const centerY = to.height / 2;
-    for (let i = reuseCount; i < newTargets.length; i++) {
+    for (let h = 0; h < toHomes.length; h++) {
+      if (claimed.has(h)) continue;
+      const target = to.particles[h];
       result.push({
-        ...newTargets[i],
+        ...target,
         currentX: centerX + (Math.random() - 0.5) * 4,
         currentY: centerY + (Math.random() - 0.5) * 4,
         vx: 0,
