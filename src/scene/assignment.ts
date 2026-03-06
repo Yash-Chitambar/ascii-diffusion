@@ -139,3 +139,47 @@ export function geneticReassign(
     particles[i].brightness = h.brightness;
   }
 }
+
+/**
+ * Assign cluster centroids to particles using a spatial grid.
+ * Divides the area into blocks, computes the average home position
+ * within each block, and sets clusterX/clusterY on each particle.
+ */
+export function assignClusterCentroids(
+  particles: AsciiParticle[],
+  width: number,
+  height: number,
+): void {
+  if (particles.length === 0) return;
+
+  const cellSize = Math.max(8, Math.ceil(Math.max(width, height) / 12));
+  const cols = Math.ceil(width / cellSize);
+
+  const cells = new Map<number, AsciiParticle[]>();
+  for (const p of particles) {
+    const cx = Math.floor(p.homeX / cellSize);
+    const cy = Math.floor(p.homeY / cellSize);
+    const key = cy * cols + cx;
+    let arr = cells.get(key);
+    if (!arr) {
+      arr = [];
+      cells.set(key, arr);
+    }
+    arr.push(p);
+  }
+
+  for (const group of cells.values()) {
+    let sumX = 0;
+    let sumY = 0;
+    for (const p of group) {
+      sumX += p.homeX;
+      sumY += p.homeY;
+    }
+    const cx = sumX / group.length;
+    const cy = sumY / group.length;
+    for (const p of group) {
+      p.clusterX = cx;
+      p.clusterY = cy;
+    }
+  }
+}

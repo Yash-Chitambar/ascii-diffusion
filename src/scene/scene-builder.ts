@@ -4,6 +4,7 @@ import { textToParticles, textToBlockParticles } from './text-to-particles.js';
 import { gridToParticles } from './grid-to-particles.js';
 import type { TextToParticlesOptions, BlockTextOptions } from './text-to-particles.js';
 import type { GridToParticlesOptions } from './grid-to-particles.js';
+import { assignClusterCentroids } from './assignment.js';
 
 /**
  * Fluent API for composing ASCII scenes from multiple sources.
@@ -48,11 +49,23 @@ export class SceneBuilder {
   }
 
   build(): AsciiScene {
-    return {
-      particles: [...this.allParticles],
-      width: this.width,
-      height: this.height,
-      config: { ...this.config },
-    };
+    const particles = [...this.allParticles];
+    const config = { ...this.config };
+
+    // Apply flow speed variance if configured
+    const baseFlowSpeed = config.flowSpeed ?? 0.04;
+    const variance = config.flowSpeedVariance ?? 0;
+    if (variance > 0) {
+      for (const p of particles) {
+        p.flowSpeed = baseFlowSpeed * (1 - variance * 0.5 + Math.random() * variance);
+      }
+    }
+
+    // Compute cluster centroids if cluster phases enabled
+    if (config.clusterPhases) {
+      assignClusterCentroids(particles, this.width, this.height);
+    }
+
+    return { particles, width: this.width, height: this.height, config };
   }
 }

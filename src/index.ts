@@ -39,7 +39,7 @@ export { imageToAsciiScene } from './scene/image-to-particles.js';
 export type { ImageToParticlesOptions } from './scene/image-to-particles.js';
 export { SceneBuilder } from './scene/scene-builder.js';
 export { transitionScenes, dissolveTransition } from './scene/transitions.js';
-export { reassignParticlesToHomes, geneticReassign } from './scene/assignment.js';
+export { reassignParticlesToHomes, geneticReassign, assignClusterCentroids } from './scene/assignment.js';
 export type { HomeSlot } from './scene/assignment.js';
 
 // ── Hooks ──
