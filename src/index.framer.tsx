@@ -82,7 +82,7 @@ export const propertyControls = {
   backgroundColor: {
     type: 'color' as const,
     title: 'Background',
-    defaultValue: '#000000',
+    defaultValue: 'transparent',
   },
   fontSize: {
     type: 'string' as const,

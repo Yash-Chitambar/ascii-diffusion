@@ -133,7 +133,7 @@ export interface RenderConfig {
 export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   colorMode: 'mono',
   monoColor: '#00d4ff',
-  backgroundColor: '#000000',
+  backgroundColor: 'transparent',
   fontSize: 'clamp(6px, 1.2vw, 14px)',
   fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", monospace',
   lineHeight: 1.0,
